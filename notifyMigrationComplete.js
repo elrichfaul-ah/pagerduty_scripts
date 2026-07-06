@@ -246,7 +246,6 @@ async function runSingleTeam(teamName, dryRun, priorityId) {
         message: `Migration Complete: ${team.name}`,
         description: OPSGENIE_ALERT_MESSAGE,
         teamName: opsgenieTeam.name,
-        runbookUrl: RUNBOOK_URL,
     })
 
     await recordNotification({
@@ -491,7 +490,6 @@ async function main() {
                     message: `Migration Complete: ${team.name}`,
                     description: OPSGENIE_ALERT_MESSAGE,
                     teamName: opsgenieTeam.name,
-                    runbookUrl: RUNBOOK_URL,
                 })
 
                 await recordNotification({

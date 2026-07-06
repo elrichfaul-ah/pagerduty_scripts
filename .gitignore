@@ -16,6 +16,7 @@ pnpm-debug.log*
 # ─── Generated output ────────────────────────────────────────────────────────
 *.md
 !README.md
+!context.md
 
 # ─── OS & editor noise ───────────────────────────────────────────────────────
 .DS_Store

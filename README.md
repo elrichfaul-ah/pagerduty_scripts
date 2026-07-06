@@ -1,14 +1,14 @@
 # PagerDuty Scripts
 
-A collection of Node.js utility scripts for auditing and managing a PagerDuty account via the [PagerDuty REST API v2](https://developer.pagerduty.com/api-reference/).
+A collection of Node.js utility scripts for auditing and managing a PagerDuty account via the [PagerDuty REST API v2](https://developer.pagerduty.com/api-reference/) and the [OpsGenie REST API](https://docs.opsgenie.com/docs/api-overview).
 
 ## Scripts
 
 ### `notifyMigrationComplete.js`
 
-The primary migration-tracking script. It scans PagerDuty for all teams tagged `Complete` (applied by Terraform when a team's migration finishes), checks MongoDB to avoid duplicate notifications, and creates a PagerDuty incident on each newly-completed team's service.
+The primary migration-tracking script. It scans PagerDuty for all teams tagged `Complete` (applied by Terraform when a team's migration finishes), checks MongoDB to determine what each team still needs, and sends a PagerDuty incident and/or OpsGenie alert accordingly.
 
-**Dry-run is the default.** Pass `--execute` to create real incidents.
+**Dry-run is the default.** Pass `--execute` to create real incidents and alerts.
 
 ```bash
 # Dry-run (default) — discovers teams, shows what would happen, writes audit records to MongoDB
@@ -139,11 +139,14 @@ PAGERDUTY_API_KEY=your_api_key_here
 # Required for notifyMigrationComplete.js (PagerDuty API requirement when creating incidents)
 PAGERDUTY_FROM_EMAIL=your_email@example.com
 
+# Required for notifyMigrationComplete.js (OpsGenie alert creation)
+OPSGENIE_API_KEY=your_opsgenie_api_key_here
+
 # MongoDB connection string — default points to the local Docker container
 MONGODB_URI=mongodb://localhost:27017
 ```
 
-A **read-write** PagerDuty API token is required for `notifyMigrationComplete.js --execute`. A **read-only** token is sufficient for all other scripts.
+A **read-write** PagerDuty API token and a **write-enabled** OpsGenie API key are required for `notifyMigrationComplete.js --execute`. A **read-only** PagerDuty token is sufficient for all other scripts.
 
 ---
 
@@ -153,6 +156,7 @@ A **read-write** PagerDuty API token is required for `notifyMigrationComplete.js
 pagerduty_scripts/
 ├── lib/
 │   ├── pagerduty.js          # Shared PagerDuty API client (GET, POST, pagination)
+│   ├── opsgenie.js           # Shared OpsGenie API client (GET, POST, pagination)
 │   └── db.js                 # MongoDB connection and team_notifications CRUD
 ├── notifyMigrationComplete.js # Migration notification script
 ├── getTeams.js               # Team listing / tag filtering
@@ -185,8 +189,10 @@ pagerduty_scripts/
 
 ## Implementation notes
 
-- **Shared API client:** `lib/pagerduty.js` provides `pdGet`, `pdPost`, `fetchAllPages`, and domain helpers used by all scripts.
-- **Automatic pagination:** `fetchAllPages()` handles PagerDuty's offset-based pagination transparently (100 records per page).
+- **Shared API clients:** `lib/pagerduty.js` provides `pdGet`, `pdPost`, `fetchAllPages`, and domain helpers. `lib/opsgenie.js` provides the equivalent for OpsGenie (`ogGet`, `ogPost`, `fetchAllPages`, `getTeamByName`, `createAlert`).
+- **Automatic pagination:** `fetchAllPages()` handles offset-based pagination transparently in both clients (100 records per page, 200-page safety cap).
 - **Tag resolution:** Tag names are matched case-insensitively with an exact client-side check, since PagerDuty's `?query=` does a substring match.
 - **Service selection:** When a team has multiple services, the first result from `GET /services?team_ids[]=` is used.
-- **Incident urgency:** Incidents are created with `urgency: low` so on-call engineers are not actively paged — the incident serves as a notification record.
+- **Incident urgency:** Incidents are created with `urgency: high` and priority `P2` so they are visible but route through the standard on-call flow.
+- **Smart coverage logic:** `lib/db.js` `getCoverageStatus()` reads the most-recent `dryRun: false` record per team and returns `{ hasPD, hasOpsGenie }`. Both the bulk run and `--team` mode use this to determine exactly what still needs to be sent — skipping what's already done, backfilling only the missing channel where applicable.
+- **OpsGenie backfill:** Teams notified before OpsGenie integration was added have a real PagerDuty incident but no OpsGenie alert. The script detects these automatically and sends the missing OpsGenie alert only, patching the existing MongoDB record via `updateOpsgenieRequestId()`.

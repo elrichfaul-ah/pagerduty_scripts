@@ -17,7 +17,7 @@ node notifyMigrationComplete.js
 # Execute — prompts for confirmation, then creates incidents and records results
 node notifyMigrationComplete.js --execute
 
-# Dry-run a single team (bypasses deduplication check — always re-notifies)
+# Dry-run a single team — applies smart coverage check (same as bulk)
 node notifyMigrationComplete.js --team NL-DDP-fundament
 
 # Execute for a single team
@@ -28,14 +28,18 @@ node notifyMigrationComplete.js --team NL-DDP-fundament --execute
 
 1. Resolves the `Complete` tag in PagerDuty
 2. Fetches all teams carrying that tag
-3. Checks MongoDB — skips any team already notified (guaranteed once-only)
-4. Looks up the first service for each remaining team
-5. Prints a discovery table showing what will happen
-6. **(Execute only)** Prompts `Proceed? [y/N]` — Enter or anything other than `y` aborts
-7. Creates a `low`-urgency PagerDuty incident per team and records the result in MongoDB
-8. Prints a final summary
+3. Checks MongoDB coverage state — classifies each team into one of five buckets:
+   - **Already done** (PD ✔ + OpsGenie ✔) — skipped
+   - **OpsGenie backfill** (PD ✔ + OpsGenie ✗) — sends OpsGenie alert only, patches MongoDB record
+   - **Full notification** (neither) — sends PD incident + OpsGenie alert, inserts new MongoDB record
+   - **No service** — skipped with warning
+   - **No OpsGenie team** — skipped with warning
+4. Prints a discovery table showing what will happen per bucket
+5. **(Execute only)** Prompts `Proceed? [y/N]` — Enter or anything other than `y` aborts
+6. Sends OpsGenie backfills first, then full notifications; per-team errors are non-fatal
+7. Prints a final summary
 
-**Deduplication guarantee:** The bulk run skips any team already recorded in MongoDB with `dryRun: false`. The `--team` flag intentionally bypasses this check so a single team can be re-notified at any time.
+**Deduplication / smart coverage:** The bulk run and `--team` mode both check MongoDB to determine exactly what each team still needs. A team with both channels covered is skipped entirely. A team with only a PD incident gets an OpsGenie backfill without creating a duplicate PD incident.
 
 **Dry-run records:** Each dry-run writes `dryRun: true` documents to MongoDB for auditability. These do **not** block future dry-runs or real runs.
 
@@ -174,6 +178,8 @@ pagerduty_scripts/
 | `incidentId` | string \| null | PagerDuty incident ID (`null` for dry-run records) |
 | `dryRun` | boolean | `true` = audit record only, `false` = real notification |
 | `notifiedAt` | Date | Timestamp of the record |
+| `opsgenieRequestId` | string \| null | OpsGenie async request ID (`null` for dry-run records; may be patched into older records by a backfill run) |
+| `opsgenieNotifiedAt` | Date \| — | Set when `opsgenieRequestId` is patched into a pre-existing record via OpsGenie backfill |
 
 ---
 

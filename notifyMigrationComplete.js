@@ -55,7 +55,8 @@ const {
 const {
     connect,
     disconnect,
-    getNotifiedTeamIds,
+    getCoverageStatus,
+    updateOpsgenieRequestId,
     recordNotification,
 } = require('./lib/db')
 
@@ -131,6 +132,12 @@ function prompt(question) {
 
 /**
  * Notify a single team by name.
+ *
+ * Applies smart coverage logic using MongoDB state:
+ *   - PD ✔ + OpsGenie ✔  → already fully notified; exits cleanly
+ *   - PD ✔ + OpsGenie ✗  → OpsGenie backfill only (no new PD incident)
+ *   - Neither             → full notification (PD incident + OpsGenie alert)
+ *
  * Throws on any unrecoverable error so the caller's finally{disconnect()} runs.
  */
 async function runSingleTeam(teamName, dryRun, priorityId) {
@@ -163,15 +170,44 @@ async function runSingleTeam(teamName, dryRun, priorityId) {
     }
     console.log(`  Confirmed — team has the "${COMPLETE_TAG}" tag.\n`)
 
-    // ── Resolve service ───────────────────────────────────────────────────────
-    console.log('Resolving team service...')
-    const service = await getFirstServiceForTeam(team.id)
-    if (!service) {
-        throw new Error(
-            `Team "${team.name}" has no services. Cannot create an incident.`
+    // ── Check MongoDB coverage ────────────────────────────────────────────────
+    console.log('Checking notification coverage in MongoDB...')
+    const coverageMap = await getCoverageStatus()
+    const coverage    = coverageMap.get(team.id) || { hasPD: false, hasOpsGenie: false }
+
+    // Determine what action is needed
+    const action = coverage.hasPD && coverage.hasOpsGenie
+        ? 'already-done'
+        : coverage.hasPD
+            ? 'opsgenie-only'
+            : 'both'
+
+    if (action === 'already-done') {
+        console.log(
+            `  Team "${team.name}" has already been fully notified ` +
+            `(PD ✔  OpsGenie ✔). Nothing to do.`
         )
+        return
     }
-    console.log(`  Service: ${service.name} (${service.id})\n`)
+
+    if (action === 'opsgenie-only') {
+        console.log('  PD incident already sent. Will backfill OpsGenie alert only.\n')
+    } else {
+        console.log('  No prior notification found. Will send to both channels.\n')
+    }
+
+    // ── Resolve service (only needed for full notification) ───────────────────
+    let service = null
+    if (action === 'both') {
+        console.log('Resolving team service...')
+        service = await getFirstServiceForTeam(team.id)
+        if (!service) {
+            throw new Error(
+                `Team "${team.name}" has no services. Cannot create an incident.`
+            )
+        }
+        console.log(`  Service: ${service.name} (${service.id})\n`)
+    }
 
     // ── Validate OpsGenie team ────────────────────────────────────────────────
     console.log('Validating OpsGenie team...')
@@ -185,77 +221,104 @@ async function runSingleTeam(teamName, dryRun, priorityId) {
     console.log(`  Confirmed — OpsGenie team "${opsgenieTeam.name}" exists.\n`)
 
     // ── Print intent ──────────────────────────────────────────────────────────
+    const modeLabel = dryRun ? 'DRY-RUN' : 'EXECUTE'
+    const verb      = dryRun ? 'Would notify' : 'Will notify'
     console.log('─'.repeat(64))
-    if (dryRun) {
-        console.log(`[DRY-RUN] Would notify: ${team.name}`)
+    console.log(`[${modeLabel}] ${verb}: ${team.name}`)
+    if (action === 'opsgenie-only') {
+        console.log(`           Mode:     OpsGenie backfill (PD incident already sent)`)
     } else {
-        console.log(`[EXECUTE] Will notify:  ${team.name}`)
+        console.log(`           Mode:     Both channels`)
+        console.log(`           Service:  ${service.name}`)
+        console.log(`           Priority: ${INCIDENT_PRIORITY}`)
+        console.log(`           Urgency:  ${INCIDENT_URGENCY}`)
     }
-    console.log(`           Service:   ${service.name}`)
-    console.log(`           Priority:  ${INCIDENT_PRIORITY}`)
-    console.log(`           Urgency:   ${INCIDENT_URGENCY}`)
-    console.log(`           OpsGenie:  ${opsgenieTeam.name}`)
+    console.log(`           OpsGenie: ${opsgenieTeam.name}`)
     console.log('─'.repeat(64) + '\n')
 
     // ── Dry-run path ──────────────────────────────────────────────────────────
     if (dryRun) {
-        await recordNotification({
-            teamId: team.id,
-            teamName: team.name,
-            serviceId: service.id,
-            serviceName: service.name,
-            incidentId: null,
-            opsgenieRequestId: null,
-            dryRun: true,
-        })
-        console.log('[DRY-RUN] Dry-run record written to MongoDB.')
+        if (action === 'both') {
+            await recordNotification({
+                teamId:           team.id,
+                teamName:         team.name,
+                serviceId:        service.id,
+                serviceName:      service.name,
+                incidentId:       null,
+                opsgenieRequestId: null,
+                dryRun:           true,
+            })
+            console.log('[DRY-RUN] Dry-run record written to MongoDB.')
+            console.log(`[DRY-RUN] Would create PD incident on service: ${service.name}`)
+            console.log(`[DRY-RUN] Would alert OpsGenie team: ${opsgenieTeam.name}`)
+        } else {
+            // opsgenie-only
+            console.log('[DRY-RUN] Would backfill OpsGenie alert (no new PD incident).')
+            console.log(`[DRY-RUN] Would alert OpsGenie team: ${opsgenieTeam.name}`)
+        }
         console.log(
-            `[DRY-RUN] Would also alert OpsGenie team: ${opsgenieTeam.name}`
-        )
-        console.log(
-            'No incident was created. Run with --execute to create a real incident.'
+            '\nNo changes made. Run with --execute to send real notifications.'
         )
         return
     }
 
     // ── Execute path: confirmation prompt ────────────────────────────────────
+    const channelDesc = action === 'opsgenie-only'
+        ? 'OpsGenie backfill (no new PD incident)'
+        : 'PagerDuty incident + OpsGenie alert'
     const answer = await prompt(
-        `Notify "${team.name}" via PagerDuty incident? [y/N]: `
+        `Notify "${team.name}" via ${channelDesc}? [y/N]: `
     )
 
     if (answer.toLowerCase() !== 'y') {
-        console.log('\nAborted. No incident was created.')
+        console.log('\nAborted. No notifications were sent.')
         return
     }
 
-    // ── Create incident ───────────────────────────────────────────────────────
     console.log('')
+
+    // ── Execute: OpsGenie-only backfill ───────────────────────────────────────
+    if (action === 'opsgenie-only') {
+        const opsgenieRequestId = await createAlert({
+            message:     `Migration Complete: ${team.name}`,
+            description: OPSGENIE_ALERT_MESSAGE,
+            teamName:    opsgenieTeam.name,
+        })
+
+        await updateOpsgenieRequestId(team.id, opsgenieRequestId)
+
+        console.log(
+            `[NOTIFIED] ${team.name} — OpsGenie backfill request ${opsgenieRequestId} (PD was already done)`
+        )
+        return
+    }
+
+    // ── Execute: full notification (both channels) ────────────────────────────
     const response = await createIncident({
-        title: `Migration Complete: ${team.name}`,
-        serviceId: service.id,
-        body: INCIDENT_BODY,
-        urgency: INCIDENT_URGENCY,
+        title:      `Migration Complete: ${team.name}`,
+        serviceId:  service.id,
+        body:       INCIDENT_BODY,
+        urgency:    INCIDENT_URGENCY,
         priorityId,
-        links: [{ href: RUNBOOK_URL, text: RUNBOOK_TEXT }],
+        links:      [{ href: RUNBOOK_URL, text: RUNBOOK_TEXT }],
     })
 
     const incidentId = response.incident.id
 
-    // ── Create OpsGenie alert ─────────────────────────────────────────────────
     const opsgenieRequestId = await createAlert({
-        message: `Migration Complete: ${team.name}`,
+        message:     `Migration Complete: ${team.name}`,
         description: OPSGENIE_ALERT_MESSAGE,
-        teamName: opsgenieTeam.name,
+        teamName:    opsgenieTeam.name,
     })
 
     await recordNotification({
-        teamId: team.id,
-        teamName: team.name,
-        serviceId: service.id,
-        serviceName: service.name,
+        teamId:           team.id,
+        teamName:         team.name,
+        serviceId:        service.id,
+        serviceName:      service.name,
         incidentId,
         opsgenieRequestId,
-        dryRun: false,
+        dryRun:           false,
     })
 
     console.log(
@@ -347,34 +410,61 @@ async function main() {
         const completeTeams = await fetchCompleteTeams()
         if (completeTeams.length === 0) return
 
-        // ── Check MongoDB for already-notified teams ───────────────────────────
-        const notifiedIds = await getNotifiedTeamIds()
-        const alreadyDone = completeTeams.filter((t) => notifiedIds.has(t.id))
-        const toProcess = completeTeams.filter((t) => !notifiedIds.has(t.id))
+        // ── Check MongoDB for per-team coverage state ──────────────────────────
+        const coverageMap = await getCoverageStatus()
 
-        // ── Resolve services for teams that need notification ──────────────────
-        console.log(
-            `\nResolving services for ${toProcess.length} team(s) to process...`
-        )
+        // Partition teams into 5 buckets based on coverage + API lookups.
+        const alreadyDone      = [] // PD ✔ + OpsGenie ✔ — nothing to do
+        const needsOpsGenieOnly = [] // PD ✔ + OpsGenie ✗ — backfill OpsGenie only
+        const toNotify         = [] // Neither            — send both channels
+        const noService        = [] // No PD service found
+        const noOpsgenieTeam   = [] // No OpsGenie team found (new or backfill)
 
-        const toNotify = [] // { team, service, opsgenieTeam }
-        const noService = [] // { team }
-        const noOpsgenieTeam = [] // { team }
-
-        for (const team of toProcess) {
-            const service = await getFirstServiceForTeam(team.id)
-            if (!service) {
-                noService.push({ team })
-                continue
+        // Teams fully covered need no API lookups at all.
+        const teamsToProcess = completeTeams.filter((t) => {
+            const cov = coverageMap.get(t.id)
+            if (cov && cov.hasPD && cov.hasOpsGenie) {
+                alreadyDone.push(t)
+                return false
             }
+            return true
+        })
 
-            const opsgenieTeam = await getOpsgenieTeamByName(team.name)
-            if (!opsgenieTeam) {
-                noOpsgenieTeam.push({ team })
-                continue
+        if (teamsToProcess.length > 0) {
+            console.log(
+                `\nResolving channels for ${teamsToProcess.length} team(s) to process...`
+            )
+        }
+
+        for (const team of teamsToProcess) {
+            const cov = coverageMap.get(team.id)
+            const needsBothChannels = !cov || (!cov.hasPD && !cov.hasOpsGenie)
+
+            if (needsBothChannels) {
+                // New team: needs PD service + OpsGenie team
+                const service = await getFirstServiceForTeam(team.id)
+                if (!service) {
+                    noService.push({ team })
+                    continue
+                }
+
+                const opsgenieTeam = await getOpsgenieTeamByName(team.name)
+                if (!opsgenieTeam) {
+                    noOpsgenieTeam.push({ team })
+                    continue
+                }
+
+                toNotify.push({ team, service, opsgenieTeam })
+            } else {
+                // PD done, OpsGenie missing: only need OpsGenie team lookup
+                const opsgenieTeam = await getOpsgenieTeamByName(team.name)
+                if (!opsgenieTeam) {
+                    noOpsgenieTeam.push({ team })
+                    continue
+                }
+
+                needsOpsGenieOnly.push({ team, opsgenieTeam })
             }
-
-            toNotify.push({ team, service, opsgenieTeam })
         }
 
         // ── Print discovery table ──────────────────────────────────────────────
@@ -382,8 +472,16 @@ async function main() {
         console.log('Discovery Results')
         console.log('─'.repeat(64))
 
+        if (needsOpsGenieOnly.length > 0) {
+            console.log(`\nOpsGenie backfill — PD done, OpsGenie missing (${needsOpsGenieOnly.length}):`)
+            needsOpsGenieOnly.forEach(({ team, opsgenieTeam }) => {
+                console.log(`  ~ ${team.name}`)
+                console.log(`      OpsGenie: ${opsgenieTeam.name}`)
+            })
+        }
+
         if (toNotify.length > 0) {
-            console.log(`\nWill notify (${toNotify.length}):`)
+            console.log(`\nFull notification — both channels (${toNotify.length}):`)
             toNotify.forEach(({ team, service, opsgenieTeam }) => {
                 console.log(`  + ${team.name}`)
                 console.log(`      Service:  ${service.name} (${service.id})`)
@@ -407,21 +505,23 @@ async function main() {
 
         if (alreadyDone.length > 0) {
             console.log(
-                `\nAlready notified — will skip (${alreadyDone.length}):`
+                `\nAlready fully notified — will skip (${alreadyDone.length}):`
             )
             alreadyDone.forEach((team) => console.log(`  - ${team.name}`))
         }
 
+        const totalActionable = needsOpsGenieOnly.length + toNotify.length
         console.log('\n' + '─'.repeat(64))
         console.log(
-            `Summary: ${toNotify.length} to notify | ` +
+            `Summary: ${toNotify.length} full | ` +
+                `${needsOpsGenieOnly.length} OpsGenie backfill | ` +
                 `${alreadyDone.length} already done | ` +
                 `${noService.length} no service | ` +
                 `${noOpsgenieTeam.length} no OpsGenie team`
         )
         console.log('─'.repeat(64) + '\n')
 
-        if (toNotify.length === 0) {
+        if (totalActionable === 0) {
             console.log('Nothing to do.')
             return
         }
@@ -432,13 +532,13 @@ async function main() {
 
             for (const { team, service, opsgenieTeam } of toNotify) {
                 await recordNotification({
-                    teamId: team.id,
-                    teamName: team.name,
-                    serviceId: service.id,
-                    serviceName: service.name,
-                    incidentId: null,
+                    teamId:           team.id,
+                    teamName:         team.name,
+                    serviceId:        service.id,
+                    serviceName:      service.name,
+                    incidentId:       null,
                     opsgenieRequestId: null,
-                    dryRun: true,
+                    dryRun:           true,
                 })
                 console.log(
                     `  [DRY-RUN] Would notify: ${team.name} via service "${service.name}"`
@@ -448,68 +548,103 @@ async function main() {
                 )
             }
 
+            for (const { team, opsgenieTeam } of needsOpsGenieOnly) {
+                console.log(
+                    `  [DRY-RUN] Would backfill OpsGenie for: ${team.name} → ${opsgenieTeam.name}`
+                )
+            }
+
             console.log(
                 `\n[DRY-RUN] Complete. ${toNotify.length} dry-run record(s) written to MongoDB.`
             )
             console.log(
-                'No incidents were created. Run with --execute to create real incidents.'
+                `[DRY-RUN] ${needsOpsGenieOnly.length} OpsGenie backfill(s) would be sent.`
+            )
+            console.log(
+                'No incidents were created. Run with --execute to create real notifications.'
             )
             return
         }
 
         // ── Execute path: confirmation prompt ─────────────────────────────────
+        const parts = []
+        if (toNotify.length)         parts.push(`${toNotify.length} full notification(s)`)
+        if (needsOpsGenieOnly.length) parts.push(`${needsOpsGenieOnly.length} OpsGenie backfill(s)`)
         const answer = await prompt(
-            `${toNotify.length} team(s) will be notified via PagerDuty incidents. Proceed? [y/N]: `
+            `${parts.join(' + ')} will be sent. Proceed? [y/N]: `
         )
 
         if (answer.toLowerCase() !== 'y') {
-            console.log('\nAborted. No incidents were created.')
+            console.log('\nAborted. No notifications were sent.')
             return
         }
 
-        // ── Execute path: create incidents ────────────────────────────────────
+        // ── Execute path: send notifications ──────────────────────────────────
         console.log('')
 
-        const results = { notified: 0, errors: 0 }
-        const errors = []
+        const results = { notified: 0, backfilled: 0, errors: 0 }
+        const errors  = []
 
+        // OpsGenie backfill first (lower risk — no new PD incidents)
+        for (const { team, opsgenieTeam } of needsOpsGenieOnly) {
+            try {
+                const opsgenieRequestId = await createAlert({
+                    message:     `Migration Complete: ${team.name}`,
+                    description: OPSGENIE_ALERT_MESSAGE,
+                    teamName:    opsgenieTeam.name,
+                })
+
+                await updateOpsgenieRequestId(team.id, opsgenieRequestId)
+
+                console.log(
+                    `  [BACKFILL]  ${team.name} — OpsGenie request ${opsgenieRequestId}`
+                )
+                results.backfilled++
+            } catch (err) {
+                console.error(`  [ERROR]     ${team.name} — ${err.message}`)
+                errors.push({ team: team.name, error: err.message })
+                results.errors++
+            }
+        }
+
+        // Full notifications (PD incident + OpsGenie alert)
         for (const { team, service, opsgenieTeam } of toNotify) {
             try {
                 const response = await createIncident({
-                    title: `Migration Complete: ${team.name}`,
-                    serviceId: service.id,
-                    body: INCIDENT_BODY,
-                    urgency: INCIDENT_URGENCY,
+                    title:      `Migration Complete: ${team.name}`,
+                    serviceId:  service.id,
+                    body:       INCIDENT_BODY,
+                    urgency:    INCIDENT_URGENCY,
                     priorityId: priority.id,
-                    links: [{ href: RUNBOOK_URL, text: RUNBOOK_TEXT }],
+                    links:      [{ href: RUNBOOK_URL, text: RUNBOOK_TEXT }],
                 })
 
                 const incidentId = response.incident.id
 
                 const opsgenieRequestId = await createAlert({
-                    message: `Migration Complete: ${team.name}`,
+                    message:     `Migration Complete: ${team.name}`,
                     description: OPSGENIE_ALERT_MESSAGE,
-                    teamName: opsgenieTeam.name,
+                    teamName:    opsgenieTeam.name,
                 })
 
                 await recordNotification({
-                    teamId: team.id,
-                    teamName: team.name,
-                    serviceId: service.id,
-                    serviceName: service.name,
+                    teamId:           team.id,
+                    teamName:         team.name,
+                    serviceId:        service.id,
+                    serviceName:      service.name,
                     incidentId,
                     opsgenieRequestId,
-                    dryRun: false,
+                    dryRun:           false,
                 })
 
                 console.log(
-                    `  [NOTIFIED] ${team.name} — PD incident ${incidentId} | OpsGenie request ${opsgenieRequestId}`
+                    `  [NOTIFIED]  ${team.name} — PD incident ${incidentId} | OpsGenie request ${opsgenieRequestId}`
                 )
                 results.notified++
             } catch (err) {
                 // Per-team errors are non-fatal — log and continue so one bad team
                 // does not block notifications for all remaining teams.
-                console.error(`  [ERROR]    ${team.name} — ${err.message}`)
+                console.error(`  [ERROR]     ${team.name} — ${err.message}`)
                 errors.push({ team: team.name, error: err.message })
                 results.errors++
             }
@@ -519,7 +654,8 @@ async function main() {
         console.log('\n' + '─'.repeat(64))
         console.log('Run Complete (EXECUTE)')
         console.log('─'.repeat(64))
-        console.log(`  Notified:                        ${results.notified}`)
+        console.log(`  Notified (both channels):        ${results.notified}`)
+        console.log(`  OpsGenie backfill:               ${results.backfilled}`)
         console.log(`  Already done (skipped):          ${alreadyDone.length}`)
         console.log(`  No service (skipped):            ${noService.length}`)
         console.log(

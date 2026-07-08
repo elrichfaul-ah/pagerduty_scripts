@@ -35,6 +35,8 @@ if (missingEnv.length) {
 // Imports — after env validation so lib/pagerduty.js requireEnv() succeeds
 // ---------------------------------------------------------------------------
 
+const fs = require('fs')
+const path = require('path')
 const readline = require('readline')
 
 const {
@@ -173,27 +175,35 @@ async function runSingleTeam(teamName, dryRun, priorityId) {
     // ── Check MongoDB coverage ────────────────────────────────────────────────
     console.log('Checking notification coverage in MongoDB...')
     const coverageMap = await getCoverageStatus()
-    const coverage    = coverageMap.get(team.id) || { hasPD: false, hasOpsGenie: false }
+    const coverage = coverageMap.get(team.id) || {
+        hasPD: false,
+        hasOpsGenie: false,
+    }
 
     // Determine what action is needed
-    const action = coverage.hasPD && coverage.hasOpsGenie
-        ? 'already-done'
-        : coverage.hasPD
-            ? 'opsgenie-only'
-            : 'both'
+    const action =
+        coverage.hasPD && coverage.hasOpsGenie
+            ? 'already-done'
+            : coverage.hasPD
+              ? 'opsgenie-only'
+              : 'both'
 
     if (action === 'already-done') {
         console.log(
             `  Team "${team.name}" has already been fully notified ` +
-            `(PD ✔  OpsGenie ✔). Nothing to do.`
+                `(PD ✔  OpsGenie ✔). Nothing to do.`
         )
         return
     }
 
     if (action === 'opsgenie-only') {
-        console.log('  PD incident already sent. Will backfill OpsGenie alert only.\n')
+        console.log(
+            '  PD incident already sent. Will backfill OpsGenie alert only.\n'
+        )
     } else {
-        console.log('  No prior notification found. Will send to both channels.\n')
+        console.log(
+            '  No prior notification found. Will send to both channels.\n'
+        )
     }
 
     // ── Resolve service (only needed for full notification) ───────────────────
@@ -222,11 +232,13 @@ async function runSingleTeam(teamName, dryRun, priorityId) {
 
     // ── Print intent ──────────────────────────────────────────────────────────
     const modeLabel = dryRun ? 'DRY-RUN' : 'EXECUTE'
-    const verb      = dryRun ? 'Would notify' : 'Will notify'
+    const verb = dryRun ? 'Would notify' : 'Will notify'
     console.log('─'.repeat(64))
     console.log(`[${modeLabel}] ${verb}: ${team.name}`)
     if (action === 'opsgenie-only') {
-        console.log(`           Mode:     OpsGenie backfill (PD incident already sent)`)
+        console.log(
+            `           Mode:     OpsGenie backfill (PD incident already sent)`
+        )
     } else {
         console.log(`           Mode:     Both channels`)
         console.log(`           Service:  ${service.name}`)
@@ -240,21 +252,29 @@ async function runSingleTeam(teamName, dryRun, priorityId) {
     if (dryRun) {
         if (action === 'both') {
             await recordNotification({
-                teamId:           team.id,
-                teamName:         team.name,
-                serviceId:        service.id,
-                serviceName:      service.name,
-                incidentId:       null,
+                teamId: team.id,
+                teamName: team.name,
+                serviceId: service.id,
+                serviceName: service.name,
+                incidentId: null,
                 opsgenieRequestId: null,
-                dryRun:           true,
+                dryRun: true,
             })
             console.log('[DRY-RUN] Dry-run record written to MongoDB.')
-            console.log(`[DRY-RUN] Would create PD incident on service: ${service.name}`)
-            console.log(`[DRY-RUN] Would alert OpsGenie team: ${opsgenieTeam.name}`)
+            console.log(
+                `[DRY-RUN] Would create PD incident on service: ${service.name}`
+            )
+            console.log(
+                `[DRY-RUN] Would alert OpsGenie team: ${opsgenieTeam.name}`
+            )
         } else {
             // opsgenie-only
-            console.log('[DRY-RUN] Would backfill OpsGenie alert (no new PD incident).')
-            console.log(`[DRY-RUN] Would alert OpsGenie team: ${opsgenieTeam.name}`)
+            console.log(
+                '[DRY-RUN] Would backfill OpsGenie alert (no new PD incident).'
+            )
+            console.log(
+                `[DRY-RUN] Would alert OpsGenie team: ${opsgenieTeam.name}`
+            )
         }
         console.log(
             '\nNo changes made. Run with --execute to send real notifications.'
@@ -263,9 +283,10 @@ async function runSingleTeam(teamName, dryRun, priorityId) {
     }
 
     // ── Execute path: confirmation prompt ────────────────────────────────────
-    const channelDesc = action === 'opsgenie-only'
-        ? 'OpsGenie backfill (no new PD incident)'
-        : 'PagerDuty incident + OpsGenie alert'
+    const channelDesc =
+        action === 'opsgenie-only'
+            ? 'OpsGenie backfill (no new PD incident)'
+            : 'PagerDuty incident + OpsGenie alert'
     const answer = await prompt(
         `Notify "${team.name}" via ${channelDesc}? [y/N]: `
     )
@@ -280,9 +301,9 @@ async function runSingleTeam(teamName, dryRun, priorityId) {
     // ── Execute: OpsGenie-only backfill ───────────────────────────────────────
     if (action === 'opsgenie-only') {
         const opsgenieRequestId = await createAlert({
-            message:     `Migration Complete: ${team.name}`,
+            message: `Migration Complete: ${team.name}`,
             description: OPSGENIE_ALERT_MESSAGE,
-            teamName:    opsgenieTeam.name,
+            teamName: opsgenieTeam.name,
         })
 
         await updateOpsgenieRequestId(team.id, opsgenieRequestId)
@@ -295,30 +316,30 @@ async function runSingleTeam(teamName, dryRun, priorityId) {
 
     // ── Execute: full notification (both channels) ────────────────────────────
     const response = await createIncident({
-        title:      `Migration Complete: ${team.name}`,
-        serviceId:  service.id,
-        body:       INCIDENT_BODY,
-        urgency:    INCIDENT_URGENCY,
+        title: `Migration Complete: ${team.name}`,
+        serviceId: service.id,
+        body: INCIDENT_BODY,
+        urgency: INCIDENT_URGENCY,
         priorityId,
-        links:      [{ href: RUNBOOK_URL, text: RUNBOOK_TEXT }],
+        links: [{ href: RUNBOOK_URL, text: RUNBOOK_TEXT }],
     })
 
     const incidentId = response.incident.id
 
     const opsgenieRequestId = await createAlert({
-        message:     `Migration Complete: ${team.name}`,
+        message: `Migration Complete: ${team.name}`,
         description: OPSGENIE_ALERT_MESSAGE,
-        teamName:    opsgenieTeam.name,
+        teamName: opsgenieTeam.name,
     })
 
     await recordNotification({
-        teamId:           team.id,
-        teamName:         team.name,
-        serviceId:        service.id,
-        serviceName:      service.name,
+        teamId: team.id,
+        teamName: team.name,
+        serviceId: service.id,
+        serviceName: service.name,
         incidentId,
         opsgenieRequestId,
-        dryRun:           false,
+        dryRun: false,
     })
 
     console.log(
@@ -369,6 +390,15 @@ async function fetchCompleteTeams() {
 async function main() {
     const { dryRun, teamName } = parseArgs()
 
+    // ── Report capture ───────────────────────────────────────────────────────
+    const reportLines = []
+    const _origLog = console.log
+    console.log = (...args) => {
+        const line = args.map(String).join(' ')
+        reportLines.push(line)
+        _origLog(...args)
+    }
+
     // ── Mode banner ──────────────────────────────────────────────────────────
     console.log('')
     if (dryRun) {
@@ -414,11 +444,11 @@ async function main() {
         const coverageMap = await getCoverageStatus()
 
         // Partition teams into 5 buckets based on coverage + API lookups.
-        const alreadyDone      = [] // PD ✔ + OpsGenie ✔ — nothing to do
+        const alreadyDone = [] // PD ✔ + OpsGenie ✔ — nothing to do
         const needsOpsGenieOnly = [] // PD ✔ + OpsGenie ✗ — backfill OpsGenie only
-        const toNotify         = [] // Neither            — send both channels
-        const noService        = [] // No PD service found
-        const noOpsgenieTeam   = [] // No OpsGenie team found (new or backfill)
+        const toNotify = [] // Neither            — send both channels
+        const noService = [] // No PD service found
+        const noOpsgenieTeam = [] // No OpsGenie team found (new or backfill)
 
         // Teams fully covered need no API lookups at all.
         const teamsToProcess = completeTeams.filter((t) => {
@@ -473,7 +503,9 @@ async function main() {
         console.log('─'.repeat(64))
 
         if (needsOpsGenieOnly.length > 0) {
-            console.log(`\nOpsGenie backfill — PD done, OpsGenie missing (${needsOpsGenieOnly.length}):`)
+            console.log(
+                `\nOpsGenie backfill — PD done, OpsGenie missing (${needsOpsGenieOnly.length}):`
+            )
             needsOpsGenieOnly.forEach(({ team, opsgenieTeam }) => {
                 console.log(`  ~ ${team.name}`)
                 console.log(`      OpsGenie: ${opsgenieTeam.name}`)
@@ -481,7 +513,9 @@ async function main() {
         }
 
         if (toNotify.length > 0) {
-            console.log(`\nFull notification — both channels (${toNotify.length}):`)
+            console.log(
+                `\nFull notification — both channels (${toNotify.length}):`
+            )
             toNotify.forEach(({ team, service, opsgenieTeam }) => {
                 console.log(`  + ${team.name}`)
                 console.log(`      Service:  ${service.name} (${service.id})`)
@@ -532,13 +566,13 @@ async function main() {
 
             for (const { team, service, opsgenieTeam } of toNotify) {
                 await recordNotification({
-                    teamId:           team.id,
-                    teamName:         team.name,
-                    serviceId:        service.id,
-                    serviceName:      service.name,
-                    incidentId:       null,
+                    teamId: team.id,
+                    teamName: team.name,
+                    serviceId: service.id,
+                    serviceName: service.name,
+                    incidentId: null,
                     opsgenieRequestId: null,
-                    dryRun:           true,
+                    dryRun: true,
                 })
                 console.log(
                     `  [DRY-RUN] Would notify: ${team.name} via service "${service.name}"`
@@ -568,8 +602,10 @@ async function main() {
 
         // ── Execute path: confirmation prompt ─────────────────────────────────
         const parts = []
-        if (toNotify.length)         parts.push(`${toNotify.length} full notification(s)`)
-        if (needsOpsGenieOnly.length) parts.push(`${needsOpsGenieOnly.length} OpsGenie backfill(s)`)
+        if (toNotify.length)
+            parts.push(`${toNotify.length} full notification(s)`)
+        if (needsOpsGenieOnly.length)
+            parts.push(`${needsOpsGenieOnly.length} OpsGenie backfill(s)`)
         const answer = await prompt(
             `${parts.join(' + ')} will be sent. Proceed? [y/N]: `
         )
@@ -583,15 +619,15 @@ async function main() {
         console.log('')
 
         const results = { notified: 0, backfilled: 0, errors: 0 }
-        const errors  = []
+        const errors = []
 
         // OpsGenie backfill first (lower risk — no new PD incidents)
         for (const { team, opsgenieTeam } of needsOpsGenieOnly) {
             try {
                 const opsgenieRequestId = await createAlert({
-                    message:     `Migration Complete: ${team.name}`,
+                    message: `Migration Complete: ${team.name}`,
                     description: OPSGENIE_ALERT_MESSAGE,
-                    teamName:    opsgenieTeam.name,
+                    teamName: opsgenieTeam.name,
                 })
 
                 await updateOpsgenieRequestId(team.id, opsgenieRequestId)
@@ -611,30 +647,30 @@ async function main() {
         for (const { team, service, opsgenieTeam } of toNotify) {
             try {
                 const response = await createIncident({
-                    title:      `Migration Complete: ${team.name}`,
-                    serviceId:  service.id,
-                    body:       INCIDENT_BODY,
-                    urgency:    INCIDENT_URGENCY,
+                    title: `Migration Complete: ${team.name}`,
+                    serviceId: service.id,
+                    body: INCIDENT_BODY,
+                    urgency: INCIDENT_URGENCY,
                     priorityId: priority.id,
-                    links:      [{ href: RUNBOOK_URL, text: RUNBOOK_TEXT }],
+                    links: [{ href: RUNBOOK_URL, text: RUNBOOK_TEXT }],
                 })
 
                 const incidentId = response.incident.id
 
                 const opsgenieRequestId = await createAlert({
-                    message:     `Migration Complete: ${team.name}`,
+                    message: `Migration Complete: ${team.name}`,
                     description: OPSGENIE_ALERT_MESSAGE,
-                    teamName:    opsgenieTeam.name,
+                    teamName: opsgenieTeam.name,
                 })
 
                 await recordNotification({
-                    teamId:           team.id,
-                    teamName:         team.name,
-                    serviceId:        service.id,
-                    serviceName:      service.name,
+                    teamId: team.id,
+                    teamName: team.name,
+                    serviceId: service.id,
+                    serviceName: service.name,
                     incidentId,
                     opsgenieRequestId,
-                    dryRun:           false,
+                    dryRun: false,
                 })
 
                 console.log(
@@ -673,6 +709,29 @@ async function main() {
     } finally {
         // Always disconnect — even if an unhandled throw reaches here.
         await disconnect()
+
+        // ── Write report file ────────────────────────────────────────────────
+        try {
+            const reportsDir = path.resolve(__dirname, 'reports')
+            fs.mkdirSync(reportsDir, { recursive: true })
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+            const mode = dryRun ? 'dry-run' : 'execute'
+            const scope = teamName
+                ? teamName.replace(/[^a-zA-Z0-9_-]/g, '_')
+                : 'bulk'
+            const reportFile = path.join(
+                reportsDir,
+                `report-${mode}-${scope}-${timestamp}.txt`
+            )
+            fs.writeFileSync(reportFile, reportLines.join('\n') + '\n', 'utf8')
+            _origLog(`\nReport saved to: ${reportFile}`)
+        } catch (writeErr) {
+            _origLog(
+                `\nWarning: could not write report file — ${writeErr.message}`
+            )
+        } finally {
+            console.log = _origLog
+        }
     }
 }
 

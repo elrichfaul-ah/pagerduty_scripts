@@ -2,8 +2,9 @@
 
 require('dotenv').config();
 
-const fs = require('fs');
+const fs   = require('fs');
 const path = require('path');
+const XLSX = require('xlsx');
 
 const {
   getAllTeams,
@@ -72,12 +73,11 @@ function statusSortKey(tags) {
 }
 
 /**
- * Write a markdown report to teams-report.md.
+ * Write a markdown report to teams-report.md and an Excel file to teams-report.xlsx.
  *
  * @param {{ team: object, tags: string[] }[]} rows
  */
 function writeReport(rows) {
-  const reportPath = path.join(__dirname, 'teams-report.md');
   const now = new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
 
   const sorted = [...rows].sort((a, b) => {
@@ -85,6 +85,8 @@ function writeReport(rows) {
     return sk !== 0 ? sk : a.team.name.localeCompare(b.team.name);
   });
 
+  // ── Markdown ──────────────────────────────────────────────────────────────
+  const mdPath = path.join(__dirname, 'teams-report.md');
   const lines = [
     '# PagerDuty Teams — Migration Status',
     '',
@@ -100,9 +102,30 @@ function writeReport(rows) {
     }),
     '',
   ];
+  fs.writeFileSync(mdPath, lines.join('\n'), 'utf8');
+  console.log(`Report written to: ${mdPath}`);
 
-  fs.writeFileSync(reportPath, lines.join('\n'), 'utf8');
-  console.log(`\nReport written to: ${reportPath}`);
+  // ── Excel ─────────────────────────────────────────────────────────────────
+  const xlsxPath = path.join(__dirname, 'teams-report.xlsx');
+
+  const wsData = [
+    ['#', 'Team Name', 'Status'],
+    ...sorted.map(({ team, tags }, i) => [
+      i + 1,
+      team.name,
+      tags.length ? sortTags(tags).join(', ') : '',
+    ]),
+  ];
+
+  const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+  // Column widths
+  ws['!cols'] = [{ wch: 5 }, { wch: 55 }, { wch: 20 }];
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Teams');
+  XLSX.writeFile(wb, xlsxPath);
+  console.log(`Report written to: ${xlsxPath}`);
 }
 
 // ---------------------------------------------------------------------------

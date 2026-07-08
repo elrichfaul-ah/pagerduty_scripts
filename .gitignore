@@ -17,6 +17,7 @@ pnpm-debug.log*
 *.md
 !README.md
 !context.md
+*.xlsx
 
 # ─── OS & editor noise ───────────────────────────────────────────────────────
 .DS_Store

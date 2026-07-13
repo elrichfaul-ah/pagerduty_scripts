@@ -18,8 +18,9 @@ function displayPagerDutyState(incident) {
 
 function displayOpsgenieState(alert) {
   if (!alert) return 'Missing notification';
-  const status = alert.status.charAt(0).toUpperCase() + alert.status.slice(1);
-  return `${status} / ${alert.acknowledged ? 'Acknowledged' : 'Unacknowledged'}`;
+  if (alert.status === 'closed') return 'Closed';
+  if (alert.acknowledged) return 'Acknowledged';
+  return 'Open';
 }
 
 function calculateRisk(pdState, opsgenieState) {
@@ -139,11 +140,11 @@ function writeReport(rows) {
     '',
     '## Applications',
     '',
-    '| Application | PagerDuty State | Opsgenie State | Risk | Notified At |',
-    '|---|---|---|---|---|',
+    '| Application | PagerDuty State | Opsgenie State | Risk |',
+    '|---|---|---|---|',
     ...sorted.map((row) =>
       `| ${escapeMarkdown(row.application)} | ${escapeMarkdown(row.pagerDuty)} | ` +
-      `${escapeMarkdown(row.opsgenie)} | ${row.risk} | ${row.notifiedAt} |`
+      `${escapeMarkdown(row.opsgenie)} | ${row.risk} |`
     ),
     '',
   ];
@@ -175,7 +176,6 @@ async function main() {
           pagerDuty: pagerDuty.display,
           opsgenie: opsgenie.display,
           risk: calculateRisk(pagerDuty, opsgenie),
-          notifiedAt: new Date(application.notifiedAt).toISOString(),
         };
       }
     );

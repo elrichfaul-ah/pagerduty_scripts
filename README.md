@@ -2,6 +2,36 @@
 
 A collection of Node.js utility scripts for auditing and managing a PagerDuty account via the [PagerDuty REST API v2](https://developer.pagerduty.com/api-reference/) and the [OpsGenie REST API](https://docs.opsgenie.com/docs/api-overview).
 
+## Reports
+
+All generated reports are written to `reports/`.
+
+| Run | Report | What it contains |
+|---|---|---|
+| `node getTeams.js` | `reports/teams-report.md` and `reports/teams-report.xlsx` | PagerDuty team names and migration status from the `Complete` and `WIP` tags |
+| `node getPendingInvites.js` | `reports/pendingInvites.md` | PagerDuty users who were invited but have not logged in |
+| `node getSuppressedServices.js` | `reports/suppressionReport.md` | Suppression rules found in legacy event rules, service orchestrations, and global orchestrations |
+| `node getMigrationAlertStates.js` | `reports/<timestamp>-migration-alert-states-report.md` | Latest PagerDuty and OpsGenie alert state and risk for each notified application |
+| `node notifyMigrationComplete.js` | `reports/report-dry-run-<scope>-<timestamp>.txt` | Full console log from a notification dry-run |
+| `node notifyMigrationComplete.js --execute` | `reports/report-execute-<scope>-<timestamp>.txt` | Full console log from a real notification run |
+
+The fixed-name reports (`teams-report`, `pendingInvites`, and `suppressionReport`) overwrite their previous version. Timestamped reports are retained as separate files. The `reports/` directory is excluded from Git.
+
+### Migration alert risk
+
+`getMigrationAlertStates.js` uses the latest real notification record per application and compares its current state in both systems:
+
+| Risk | Meaning |
+|---|---|
+| `None` | Both channels are handled: PagerDuty is acknowledged/resolved and OpsGenie is acknowledged/closed |
+| `Low` | At least one channel is handled, but the other remains open |
+| `High` | PagerDuty is triggered and OpsGenie is open; neither channel has been handled |
+| `Unknown` | A notification ID is missing or an API lookup failed |
+
+Its application table contains `Application`, `PagerDuty State`, `Opsgenie State`, and `Risk`. The script is read-only and requires MongoDB plus both API keys.
+
+---
+
 ## Scripts
 
 ### `notifyMigrationComplete.js`
@@ -47,7 +77,7 @@ node notifyMigrationComplete.js --team NL-DDP-fundament --execute
 
 ### `getTeams.js`
 
-Lists teams in the PagerDuty account, with optional filtering by tag name.
+Lists teams in the PagerDuty account, with optional filtering by tag name, and generates Markdown and Excel reports. Reported migration status only considers the `Complete` and `WIP` tags.
 
 - **No arguments** — prints every team in the account to the console.
 - **One or more tag names** — prints only teams that match any of the given tags (union), showing which tags matched each team.
@@ -60,7 +90,7 @@ node getTeams.js
 node getTeams.js Complete
 
 # List teams matching any of multiple tags
-node getTeams.js Complete InProgress Review
+node getTeams.js Complete WIP
 ```
 
 **Example output:**
@@ -79,7 +109,7 @@ node getTeams.js Complete InProgress Review
 
 Audits user accounts to identify users who have been sent a PagerDuty invitation but have never logged in (`invitation_sent === true`).
 
-Fetches all users, filters for pending invites, and writes a Markdown report to `pendingInvites.md` in the project root (overwriting any previous run).
+Fetches all users, filters for pending invites, and writes `reports/pendingInvites.md` (overwriting the previous report).
 
 ```bash
 node getPendingInvites.js
@@ -94,8 +124,30 @@ Total users:          518
 Accepted (active):    263
 Pending (not logged): 255
 
-Report written to /path/to/pagerduty_scripts/pendingInvites.md
+Report written to /path/to/pagerduty_scripts/reports/pendingInvites.md
 ```
+
+---
+
+### `getSuppressedServices.js`
+
+Audits PagerDuty services and event orchestrations for active suppression rules. It checks legacy event rules, service-level orchestrations, and global orchestrations, then writes `reports/suppressionReport.md`.
+
+```bash
+node getSuppressedServices.js
+```
+
+---
+
+### `getMigrationAlertStates.js`
+
+Creates a current dual-channel engagement report for migration notifications. It joins the latest real MongoDB notification record per application to its PagerDuty incident and OpsGenie alert, calculates risk, and writes a timestamped Markdown report.
+
+```bash
+node getMigrationAlertStates.js
+```
+
+This script only reads data; it does not create or update incidents or alerts.
 
 ---
 
@@ -139,14 +191,14 @@ PAGERDUTY_API_KEY=your_api_key_here
 # Required for notifyMigrationComplete.js (PagerDuty API requirement when creating incidents)
 PAGERDUTY_FROM_EMAIL=your_email@example.com
 
-# Required for notifyMigrationComplete.js (OpsGenie alert creation)
+# Required for notifyMigrationComplete.js and getMigrationAlertStates.js
 OPSGENIE_API_KEY=your_opsgenie_api_key_here
 
 # MongoDB connection string — default points to the local Docker container
 MONGODB_URI=mongodb://localhost:27017
 ```
 
-A **read-write** PagerDuty API token and a **write-enabled** OpsGenie API key are required for `notifyMigrationComplete.js --execute`. A **read-only** PagerDuty token is sufficient for all other scripts.
+A **read-write** PagerDuty API token and a **write-enabled** OpsGenie API key are required for `notifyMigrationComplete.js --execute`. Read access to PagerDuty and OpsGenie is sufficient for `getMigrationAlertStates.js`.
 
 ---
 
@@ -159,8 +211,11 @@ pagerduty_scripts/
 │   ├── opsgenie.js           # Shared OpsGenie API client (GET, POST, pagination)
 │   └── db.js                 # MongoDB connection and team_notifications CRUD
 ├── notifyMigrationComplete.js # Migration notification script
-├── getTeams.js               # Team listing / tag filtering
-├── getPendingInvites.js      # Pending invite audit + Markdown report
+├── getTeams.js               # Team/tag audit + Markdown and Excel reports
+├── getPendingInvites.js      # Pending invite Markdown report
+├── getSuppressedServices.js  # Suppression-rule Markdown report
+├── getMigrationAlertStates.js # PD/OpsGenie alert-state and risk report
+├── reports/                  # Generated reports (not committed)
 ├── docker-compose.yml        # Local MongoDB container
 ├── .env                      # Environment variables (not committed)
 └── package.json

@@ -13,6 +13,7 @@ All generated reports are written to `reports/`.
 | `node getSuppressedServices.js` | `reports/suppressionReport.md` | Suppression rules found in legacy event rules, service orchestrations, and global orchestrations |
 | `node getMigrationAlertStates.js` | `reports/<timestamp>-migration-alert-states-report.md` | Latest PagerDuty and OpsGenie alert state and risk for each notified application |
 | `node getPagerDutyOnCall.js` | `reports/<timestamp>-pagerduty-on-call-report.md` | Current PagerDuty on-call users per team, escalation policy, level, and schedule |
+| `node getOnCallComparison.js` | `reports/<timestamp>-on-call-comparison-report.md` | Side-by-side Level 1 PagerDuty and current Opsgenie on-call coverage by team |
 | `node notifyMigrationComplete.js` | `reports/report-dry-run-<scope>-<timestamp>.txt` | Full console log from a notification dry-run |
 | `node notifyMigrationComplete.js --execute` | `reports/report-execute-<scope>-<timestamp>.txt` | Full console log from a real notification run |
 
@@ -164,6 +165,18 @@ This script is read-only and requires `PAGERDUTY_API_KEY`.
 
 ---
 
+### `getOnCallComparison.js`
+
+Compares PagerDuty Level 1 on-call users with current Opsgenie on-call recipients. Teams are matched by exact name, case-insensitively, and coverage gaps in either platform are shown explicitly.
+
+```bash
+node getOnCallComparison.js
+```
+
+This script is read-only and requires both `PAGERDUTY_API_KEY` and `OPSGENIE_API_KEY`. Opsgenie schedule lookups are throttled to avoid API rate limits.
+
+---
+
 ## Setup
 
 ### Prerequisites
@@ -229,6 +242,7 @@ pagerduty_scripts/
 ├── getSuppressedServices.js  # Suppression-rule Markdown report
 ├── getMigrationAlertStates.js # PD/OpsGenie alert-state and risk report
 ├── getPagerDutyOnCall.js     # Current PagerDuty on-call report
+├── getOnCallComparison.js    # PagerDuty/Opsgenie on-call comparison
 ├── reports/                  # Generated reports (not committed)
 ├── docker-compose.yml        # Local MongoDB container
 ├── .env                      # Environment variables (not committed)

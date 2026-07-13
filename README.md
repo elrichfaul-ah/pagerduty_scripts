@@ -14,6 +14,7 @@ All generated reports are written to `reports/`.
 | `node getMigrationAlertStates.js` | `reports/<timestamp>-migration-alert-states-report.md` | Latest PagerDuty and OpsGenie alert state and risk for each notified application |
 | `node getPagerDutyOnCall.js` | `reports/<timestamp>-pagerduty-on-call-report.md` | Current PagerDuty on-call users per team, escalation policy, level, and schedule |
 | `node getOnCallComparison.js` | `reports/<timestamp>-on-call-comparison-report.md` | Side-by-side Level 1 PagerDuty and current Opsgenie on-call coverage by team |
+| `node getDailyMigrationReport.js` | `reports/daily/YYYY-MM-DD-migration-summary.md` | Condensed management summary: progress, readiness funnel, daily changes, and top actions |
 | `node notifyMigrationComplete.js` | `reports/report-dry-run-<scope>-<timestamp>.txt` | Full console log from a notification dry-run |
 | `node notifyMigrationComplete.js --execute` | `reports/report-execute-<scope>-<timestamp>.txt` | Full console log from a real notification run |
 
@@ -177,6 +178,18 @@ This script is read-only and requires both `PAGERDUTY_API_KEY` and `OPSGENIE_API
 
 ---
 
+### `getDailyMigrationReport.js`
+
+Creates the recommended daily management report. It evaluates the approved scope in `config/migration-teams.json` against live PagerDuty, Opsgenie, and MongoDB data, then reports overall status, readiness, changes since the previous snapshot, and the 20 highest-priority actions.
+
+```bash
+node getDailyMigrationReport.js
+```
+
+The report is written to `reports/daily/YYYY-MM-DD-migration-summary.md`. A same-day JSON snapshot is stored alongside it for day-over-day comparisons. It is read-only and requires `PAGERDUTY_API_KEY`, `OPSGENIE_API_KEY`, and `MONGODB_URI`.
+
+---
+
 ## Setup
 
 ### Prerequisites
@@ -243,6 +256,9 @@ pagerduty_scripts/
 ├── getMigrationAlertStates.js # PD/OpsGenie alert-state and risk report
 ├── getPagerDutyOnCall.js     # Current PagerDuty on-call report
 ├── getOnCallComparison.js    # PagerDuty/Opsgenie on-call comparison
+├── getDailyMigrationReport.js # Condensed daily management report
+├── config/
+│   └── migration-teams.json  # Approved migration scope
 ├── reports/                  # Generated reports (not committed)
 ├── docker-compose.yml        # Local MongoDB container
 ├── .env                      # Environment variables (not committed)

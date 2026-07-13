@@ -12,6 +12,7 @@ All generated reports are written to `reports/`.
 | `node getPendingInvites.js` | `reports/pendingInvites.md` | PagerDuty users who were invited but have not logged in |
 | `node getSuppressedServices.js` | `reports/suppressionReport.md` | Suppression rules found in legacy event rules, service orchestrations, and global orchestrations |
 | `node getMigrationAlertStates.js` | `reports/<timestamp>-migration-alert-states-report.md` | Latest PagerDuty and OpsGenie alert state and risk for each notified application |
+| `node getPagerDutyOnCall.js` | `reports/<timestamp>-pagerduty-on-call-report.md` | Current PagerDuty on-call users per team, escalation policy, level, and schedule |
 | `node notifyMigrationComplete.js` | `reports/report-dry-run-<scope>-<timestamp>.txt` | Full console log from a notification dry-run |
 | `node notifyMigrationComplete.js --execute` | `reports/report-execute-<scope>-<timestamp>.txt` | Full console log from a real notification run |
 
@@ -151,6 +152,18 @@ This script only reads data; it does not create or update incidents or alerts.
 
 ---
 
+### `getPagerDutyOnCall.js`
+
+Lists the current PagerDuty on-call users for every team, escalation policy, escalation level, and schedule. Teams without escalation policies and policies without an active on-call are shown explicitly in the timestamped Markdown report.
+
+```bash
+node getPagerDutyOnCall.js
+```
+
+This script is read-only and requires `PAGERDUTY_API_KEY`.
+
+---
+
 ## Setup
 
 ### Prerequisites
@@ -215,6 +228,7 @@ pagerduty_scripts/
 ├── getPendingInvites.js      # Pending invite Markdown report
 ├── getSuppressedServices.js  # Suppression-rule Markdown report
 ├── getMigrationAlertStates.js # PD/OpsGenie alert-state and risk report
+├── getPagerDutyOnCall.js     # Current PagerDuty on-call report
 ├── reports/                  # Generated reports (not committed)
 ├── docker-compose.yml        # Local MongoDB container
 ├── .env                      # Environment variables (not committed)

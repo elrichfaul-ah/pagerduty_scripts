@@ -17,10 +17,8 @@
     "NL-EEP-developer_platform",
     "NL-ETOS-commerce_analytics",
     "NL-ETOS-DBManagement-L3",
-    "NL-GALL-Flusso",
     "NL-GALL-Integrations",
     "NL-GALL-SFSC",
-    "NL-GALL-Supply_Chain",
     "NL-GET-app",
     "NL-GET-Commerce",
     "NL-GET-commerce_foundation",
@@ -60,6 +58,8 @@
     "NL-EEP-ismw",
     "NL-EEP-mynt",
     "NL-EEP-nexa",
-    "NL-EEP-storex_platform-engineering"
+    "NL-EEP-storex_platform-engineering",
+    "NL-GALL-Flusso",
+    "NL-GALL-Supply_Chain"
   ]
 }

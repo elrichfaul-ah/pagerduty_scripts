@@ -10,23 +10,10 @@ const { fetchAllPages, getAllTeams, resolveTagId, getTeamIdsByTagId, pdGet } = r
 const { ogGet } = require('./lib/opsgenie')
 
 const CONFIG = require('./config/migration-teams.json')
-const ALERT_CONCURRENCY = 2
-const ACTION_LIMIT = 20
+const OPSGENIE_FALLBACK_INTERVAL_MS = 700
 
-function mapWithConcurrency(items, limit, mapper) {
-    const results = new Array(items.length)
-    let nextIndex = 0
-
-    async function worker() {
-        while (nextIndex < items.length) {
-            const index = nextIndex++
-            results[index] = await mapper(items[index])
-        }
-    }
-
-    return Promise.all(
-        Array.from({ length: Math.min(limit, items.length) }, () => worker())
-    ).then(() => results)
+function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 function escapeMarkdown(value) {
@@ -36,43 +23,101 @@ function escapeMarkdown(value) {
 }
 
 function dateStamp(date) {
-    return date.toISOString().slice(0, 10)
+    return date.toLocaleDateString('en-CA', { timeZone: 'Europe/Amsterdam' })
 }
 
-async function getAlertHandling(coverage) {
-    if (!coverage.hasPD || !coverage.hasOpsGenie) {
-        return { pd: 'Missing', og: 'Missing', handled: false, unknown: false }
-    }
-
+// Phase 1 — resolve via async request ID (fast, no throttle needed).
+// Returns the Opsgenie alert object, or null if the request ID has expired (404).
+async function resolveViaRequestId(requestId) {
     try {
-        const [pdResponse, ogRequest] = await Promise.all([
-            pdGet(`/incidents/${coverage.incidentId}`),
-            ogGet(`/v2/alerts/requests/${encodeURIComponent(coverage.opsgenieRequestId)}`),
-        ])
-        const alertId = ogRequest.data?.alertId
-        if (!alertId) throw new Error('Opsgenie request did not resolve to an alert')
-
-        const ogResponse = await ogGet(
-            `/v2/alerts/${encodeURIComponent(alertId)}?identifierType=id`
-        )
-        const pdStatus = pdResponse.incident.status
-        const ogAlert = ogResponse.data
-        const ogStatus = ogAlert.status === 'closed'
-            ? 'Closed'
-            : ogAlert.acknowledged
-              ? 'Acknowledged'
-              : 'Open'
-
-        return {
-            pd: pdStatus.charAt(0).toUpperCase() + pdStatus.slice(1),
-            og: ogStatus,
-            handled: ['acknowledged', 'resolved'].includes(pdStatus) &&
-                (ogAlert.acknowledged || ogAlert.status === 'closed'),
-            unknown: false,
-        }
-    } catch (err) {
-        return { pd: 'Lookup failed', og: 'Lookup failed', handled: false, unknown: true }
+        const req = await ogGet(`/v2/alerts/requests/${encodeURIComponent(requestId)}`)
+        const alertId = req.data?.alertId
+        if (!alertId) return null
+        const res = await ogGet(`/v2/alerts/${encodeURIComponent(alertId)}?identifierType=id`)
+        return res.data ?? null
+    } catch (_) {
+        return null
     }
+}
+
+// Phase 2 — message search fallback for expired request IDs.
+// Called sequentially with a throttle delay between each invocation.
+async function resolveViaMessageSearch(teamName) {
+    const q = encodeURIComponent(`message:"Migration Complete: ${teamName}"`)
+    const res = await ogGet(`/v2/alerts?query=${q}&limit=1&sort=createdAt&order=desc`)
+    return res.data?.[0] ?? null
+}
+
+function buildAlertResult(pdResponse, ogAlert) {
+    const pdStatus = pdResponse.incident.status
+    const ogStatus = ogAlert.status === 'closed'
+        ? 'Closed'
+        : ogAlert.acknowledged
+          ? 'Acknowledged'
+          : 'Open'
+    return {
+        pd: pdStatus.charAt(0).toUpperCase() + pdStatus.slice(1),
+        og: ogStatus,
+        handled: ogAlert.acknowledged || ogAlert.status === 'closed',
+        pdHandled: ['acknowledged', 'resolved'].includes(pdStatus),
+        unknown: false,
+    }
+}
+
+const FAILED = { pd: 'Lookup failed', og: 'Lookup failed', handled: false, unknown: true }
+
+// Two-phase batch alert resolution.
+// Phase 1 runs all PD + OG request-ID lookups concurrently.
+// Phase 2 runs message-search fallbacks for expired request IDs sequentially at 700 ms intervals.
+async function getAlertHandlingBatch(candidates) {
+    if (candidates.length === 0) return new Map()
+
+    // Phase 1: concurrent PD + OG request-ID lookups
+    const phase1 = await Promise.all(
+        candidates.map(async (row) => {
+            try {
+                const [pdResponse, ogAlert] = await Promise.all([
+                    pdGet(`/incidents/${row.coverage.incidentId}`),
+                    resolveViaRequestId(row.coverage.opsgenieRequestId),
+                ])
+                return { name: row.name, pdResponse, ogAlert, needsFallback: ogAlert === null }
+            } catch (_) {
+                return { name: row.name, pdResponse: null, ogAlert: null, needsFallback: false, failed: true }
+            }
+        })
+    )
+
+    const results = new Map()
+    const needsFallback = []
+
+    for (const item of phase1) {
+        if (item.failed) {
+            results.set(item.name, FAILED)
+        } else if (!item.needsFallback) {
+            results.set(item.name, buildAlertResult(item.pdResponse, item.ogAlert))
+        } else {
+            needsFallback.push(item)
+        }
+    }
+
+    // Phase 2: sequential message-search fallbacks with throttle
+    console.log(`  Phase 2: ${needsFallback.length} team(s) need Opsgenie message-search fallback...`)
+    for (let i = 0; i < needsFallback.length; i++) {
+        const item = needsFallback[i]
+        try {
+            const teamName = candidates.find((c) => c.name === item.name)?.coverage?.teamName || item.name
+            const ogAlert = await resolveViaMessageSearch(teamName)
+            results.set(item.name, ogAlert
+                ? buildAlertResult(item.pdResponse, ogAlert)
+                : FAILED
+            )
+        } catch (_) {
+            results.set(item.name, FAILED)
+        }
+        if (i < needsFallback.length - 1) await sleep(OPSGENIE_FALLBACK_INTERVAL_MS)
+    }
+
+    return results
 }
 
 function findPreviousSnapshot(dailyDir, today) {
@@ -92,49 +137,27 @@ function classifyTeam(team) {
     if (team.tags.includes('WIP') && !team.tags.includes('Complete')) {
         return { status: 'In Progress', issue: 'Migration is tagged WIP' }
     }
-    if (!team.tags.includes('Complete')) {
-        return { status: 'Not Started', issue: 'Migration tag is missing' }
-    }
-    if (!team.hasService) return { status: 'Blocked', issue: 'PagerDuty service is missing' }
-    if (!team.hasPolicy) return { status: 'Blocked', issue: 'Escalation policy is missing' }
-    if (!team.hasLevel1) return { status: 'Blocked', issue: 'Level 1 on-call is missing' }
-    if (!team.hasPDNotification) return { status: 'Blocked', issue: 'PagerDuty notification is missing' }
-    if (!team.hasOpsgenieNotification) return { status: 'Blocked', issue: 'Opsgenie notification is missing' }
+    if (!team.hasPolicy) return { status: 'Attention', issue: 'Escalation policy needs to be configured' }
+    if (!team.hasLevel1) return { status: 'Attention', issue: 'Level 1 on-call needs to be configured' }
+    if (team.hasService && !team.hasPDNotification) return { status: 'In Progress', issue: 'PagerDuty notification has not been triggered' }
+    if (!team.hasOpsgenieNotification) return { status: 'In Progress', issue: 'Opsgenie notification has not been triggered' }
     if (team.alerts.unknown) return { status: 'Unknown', issue: 'Alert status lookup failed' }
-    if (!team.alerts.handled) return { status: 'Attention', issue: 'Both migration notifications require handling' }
+    if (!team.alerts.handled) return { status: 'Attention', issue: 'Opsgenie notification requires acknowledgement' }
     return { status: 'Ready', issue: '' }
 }
 
-function priorityFor(status) {
-    if (status === 'Blocked' || status === 'Not Started') return 'Critical'
-    if (status === 'Attention') return 'High'
-    if (status === 'Unknown') return 'High'
-    return 'Medium'
-}
-
-function requiredAction(status, issue) {
-    if (status === 'Attention') return 'Contact team owner to handle both notifications'
-    if (status === 'In Progress') return 'Complete migration configuration and apply Complete tag'
-    if (status === 'Unknown') return 'Retry data collection and validate API access'
-    if (issue === 'PagerDuty team is missing') return 'Create or map the PagerDuty team'
-    if (issue === 'Migration tag is missing') return 'Confirm migration scope and apply the correct tag'
-    if (issue === 'PagerDuty service is missing') return 'Create or assign a PagerDuty service'
-    if (issue === 'Escalation policy is missing') return 'Create or assign an escalation policy'
-    if (issue === 'Level 1 on-call is missing') return 'Configure an active Level 1 on-call schedule'
-    if (issue === 'PagerDuty notification is missing') return 'Send or reconcile the PagerDuty notification'
-    if (issue === 'Opsgenie notification is missing') return 'Send or reconcile the Opsgenie notification'
-    return 'Resolve the listed migration prerequisite'
-}
-
-function writeOutputs(rows, priorSnapshot, excludedCount) {
+function writeOutputs(rows, priorSnapshot, excludedCount, invites) {
     const now = new Date()
     const today = dateStamp(now)
     const dailyDir = path.join(__dirname, 'reports', 'daily')
+    const actionsDir = path.join(dailyDir, 'actions')
     const reportPath = path.join(dailyDir, `${today}-migration-summary.md`)
     const snapshotPath = path.join(dailyDir, `${today}-migration-snapshot.json`)
+    const actionsPath = path.join(actionsDir, `${today}-migration-actions.md`)
     fs.mkdirSync(dailyDir, { recursive: true })
+    fs.mkdirSync(actionsDir, { recursive: true })
 
-    const statuses = ['Ready', 'Attention', 'Blocked', 'In Progress', 'Not Started', 'Unknown']
+    const statuses = ['Ready', 'Attention', 'In Progress', 'Not Started', 'Unknown']
     const counts = Object.fromEntries(statuses.map((status) => [status, 0]))
     for (const row of rows) counts[row.status]++
 
@@ -152,28 +175,35 @@ function writeOutputs(rows, priorSnapshot, excludedCount) {
     const level1 = rows.filter((row) => row.hasLevel1).length
     const bothSent = rows.filter((row) => row.hasPDNotification && row.hasOpsgenieNotification).length
     const bothHandled = rows.filter((row) => row.alerts.handled).length
+    const pdHandled = rows.filter((row) => row.alerts.pdHandled).length
     const readyPercentage = ((counts.Ready / rows.length) * 100).toFixed(1)
-    const overall = counts.Ready / rows.length >= 0.95 && counts.Blocked === 0
+    const overall = counts.Ready / rows.length >= 0.95
         ? 'Green'
-        : counts.Ready / rows.length >= 0.8 && counts.Blocked === 0
+        : counts.Ready / rows.length >= 0.8
           ? 'Amber'
           : 'Red'
 
-    const actions = rows
-        .filter((row) => !['Ready', 'In Progress'].includes(row.status))
-        .sort((a, b) => {
-            const priority = { Critical: 0, High: 1, Medium: 2 }
-            return priority[priorityFor(a.status)] - priority[priorityFor(b.status)] || a.name.localeCompare(b.name)
-        })
-        .slice(0, ACTION_LIMIT)
+    const actionableRows = rows.filter((row) => !['Ready', 'In Progress'].includes(row.status))
+    const byIssue = new Map()
+    for (const row of actionableRows) {
+        if (!byIssue.has(row.issue)) byIssue.set(row.issue, [])
+        byIssue.get(row.issue).push(row.name)
+    }
+    const issueSummary = [...byIssue.entries()]
+        .map(([issue, teams]) => ({ issue, teams: teams.sort() }))
+        .sort((a, b) => b.teams.length - a.teams.length)
 
-    const generatedAt = now.toISOString().replace('T', ' ').slice(0, 19) + ' UTC'
+    const generatedAt = now.toLocaleString('en-CA', {
+        timeZone: 'Europe/Amsterdam',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+        hour12: false,
+    }).replace(',', '') + ' AMS'
     const lines = [
         '# Opsgenie to PagerDuty Migration',
         '',
         `**Daily Summary - ${today}**`,
         '',
-        `**Overall status:** ${overall}  `,
         `**Approved scope:** ${rows.length} teams  `,
         `**Fully ready:** ${counts.Ready} teams (${readyPercentage}%)  `,
         `**Data timestamp:** ${generatedAt}`,
@@ -193,7 +223,16 @@ function writeOutputs(rows, priorSnapshot, excludedCount) {
         `| Service configured | ${service}/${rows.length} |`,
         `| Level 1 on-call active | ${level1}/${rows.length} |`,
         `| Both notifications sent | ${bothSent}/${rows.length} |`,
-        `| Both notifications handled | ${bothHandled}/${rows.length} |`,
+        `| Opsgenie notification acknowledged or closed | ${bothHandled}/${bothSent} |`,
+        `| PagerDuty notification acknowledged or resolved | ${pdHandled}/${bothSent} |`,
+        '',
+        '## Pending Invitations',
+        '',
+        '| Status | Count | Percentage |',
+        '|---|---:|---:|',
+        `| Accepted (active) | ${invites.accepted} | ${((invites.accepted / invites.total) * 100).toFixed(1)}% |`,
+        `| Pending (not accepted) | ${invites.pending} | ${((invites.pending / invites.total) * 100).toFixed(1)}% |`,
+        `| **Total** | **${invites.total}** | **100%** |`,
         '',
         '## Since Previous Report',
         '',
@@ -203,31 +242,40 @@ function writeOutputs(rows, priorSnapshot, excludedCount) {
         priorSnapshot ? `- New blockers: ${newBlockers.length}` : '',
         priorSnapshot ? `- Resolved blockers: ${resolvedBlockers.length}` : '',
         '',
-        '## Priority Actions',
+        '## Actions Required',
         '',
-        '| Priority | Team | Issue | Required Action |',
-        '|---|---|---|---|',
-        ...actions.map((row) =>
-            `| ${priorityFor(row.status)} | ${escapeMarkdown(row.name)} | ` +
-            `${escapeMarkdown(row.issue)} | ${escapeMarkdown(row.requiredAction)} |`
-        ),
+        '| Issue | Teams |',
+        '|---|---:|',
+        ...issueSummary.map(({ issue, teams }) => `| ${escapeMarkdown(issue)} | ${teams.length} |`),
+        `| **Total** | **${actionableRows.length}** |`,
         '',
-        actions.length < rows.filter((row) => !['Ready', 'In Progress'].includes(row.status)).length
-            ? `Additional teams requiring action: ${rows.filter((row) => !['Ready', 'In Progress'].includes(row.status)).length - actions.length}`
-            : '',
+        `_Full team breakdown: [${today}-migration-actions.md](./actions/${today}-migration-actions.md)_`,
         '',
         '## Notes',
         '',
-        '- Suppression rules and pending invitations are reported by their dedicated audit scripts and are not readiness blockers in this version.',
-        '- Ready requires both PagerDuty and Opsgenie migration notifications to be handled.',
+        '- Suppression rules are reported by the dedicated audit script and are not readiness blockers in this version.',
+        '- Ready requires the Opsgenie migration notification to be acknowledged or closed by the team.',
         '- Team scope is defined in `config/migration-teams.json`.',
         `- Manually excluded from this report: ${excludedCount} teams.`,
         '',
     ].filter((line, index, array) => line !== '' || index === 0 || array[index - 1] !== '')
 
+    const actionsLines = [
+        '# Migration Actions Detail',
+        '',
+        `_Generated: ${generatedAt}_`,
+        '',
+        ...issueSummary.flatMap(({ issue, teams }) => [
+            `## ${issue} (${teams.length})`,
+            '',
+            ...teams.map((name) => `- ${name}`),
+            '',
+        ]),
+    ]
+
     const snapshot = {
         generatedAt: now.toISOString(),
-        summary: { overall, approved: rows.length, counts },
+        summary: { overall, approved: rows.length, counts, invites },
         teams: rows.map((row) => ({
             name: row.name,
             status: row.status,
@@ -243,8 +291,9 @@ function writeOutputs(rows, priorSnapshot, excludedCount) {
     }
 
     fs.writeFileSync(reportPath, `${lines.join('\n')}\n`, 'utf8')
+    fs.writeFileSync(actionsPath, `${actionsLines.join('\n')}\n`, 'utf8')
     fs.writeFileSync(snapshotPath, `${JSON.stringify(snapshot, null, 2)}\n`, 'utf8')
-    return { reportPath, snapshotPath }
+    return { reportPath, actionsPath, snapshotPath }
 }
 
 async function main() {
@@ -261,13 +310,16 @@ async function main() {
             tagIds.set(name, await getTeamIdsByTagId(tag.id))
         }
 
-        const [pdTeams, services, policies, onCalls, coverage] = await Promise.all([
+        const [pdTeams, services, policies, onCalls, coverage, allUsers] = await Promise.all([
             getAllTeams(),
             fetchAllPages('/services?include[]=teams', 'services'),
             fetchAllPages('/escalation_policies?include[]=teams', 'escalation_policies'),
             fetchAllPages('/oncalls?include[]=users&include[]=escalation_policies', 'oncalls'),
             getCoverageStatus(),
+            fetchAllPages('/users', 'users'),
         ])
+        const pending = allUsers.filter((u) => u.invitation_sent === true).length
+        const invites = { total: allUsers.length, accepted: allUsers.length - pending, pending }
         const pdByName = new Map(pdTeams.map((team) => [team.name.toLowerCase(), team]))
         const tagsByTeamId = new Map()
         for (const [tagName, ids] of tagIds) {
@@ -311,12 +363,9 @@ async function main() {
                 coverage: teamCoverage,
             }
         })
-        const alertStates = await mapWithConcurrency(
-            baseRows.filter((row) => row.coverage?.hasPD && row.coverage?.hasOpsGenie),
-            ALERT_CONCURRENCY,
-            async (row) => ({ name: row.name, alerts: await getAlertHandling(row.coverage) })
-        )
-        const alertsByName = new Map(alertStates.map((item) => [item.name, item.alerts]))
+        const candidates = baseRows.filter((row) => row.coverage?.hasPD && row.coverage?.hasOpsGenie)
+        console.log(`  Phase 1: resolving ${candidates.length} alert(s) concurrently...`)
+        const alertsByName = await getAlertHandlingBatch(candidates)
         const rows = baseRows.map((row) => {
             const alerts = alertsByName.get(row.name) || {
                 pd: row.hasPDNotification ? 'Not checked' : 'Missing',
@@ -329,17 +378,18 @@ async function main() {
                 ...row,
                 alerts,
                 ...classification,
-                requiredAction: requiredAction(classification.status, classification.issue),
             }
         })
 
         const dailyDir = path.join(__dirname, 'reports', 'daily')
-        const { reportPath, snapshotPath } = writeOutputs(
+        const { reportPath, actionsPath, snapshotPath } = writeOutputs(
             rows,
             findPreviousSnapshot(dailyDir, dateStamp(new Date())),
-            excludedNames.size
+            excludedNames.size,
+            invites
         )
         console.log(`Report written to ${reportPath}`)
+        console.log(`Actions written to ${actionsPath}`)
         console.log(`Snapshot written to ${snapshotPath}`)
     } finally {
         await disconnect()

@@ -188,6 +188,8 @@ node getDailyMigrationReport.js
 
 The report is written to `reports/daily/YYYY-MM-DD-migration-summary.md`. A same-day JSON snapshot is stored alongside it for day-over-day comparisons. It is read-only and requires `PAGERDUTY_API_KEY`, `OPSGENIE_API_KEY`, and `MONGODB_URI`.
 
+To omit teams from the daily report, add their names to `excludedTeams` in `config/migration-teams.json`. Matching is case-insensitive and exclusions apply to both `additionalTeams` and teams discovered from the live `Complete`/`WIP` tags.
+
 ---
 
 ## Setup

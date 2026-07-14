@@ -55,5 +55,11 @@
     "NL-STP-store_supernova",
     "NL-TECH-Integration_EDI-L2",
     "Tech NL Incident Commander - Gall"
+  ],
+  "excludedTeams": [
+    "NL-EEP-ismw",
+    "NL-EEP-mynt",
+    "NL-EEP-nexa",
+    "NL-EEP-storex_platform-engineering"
   ]
 }

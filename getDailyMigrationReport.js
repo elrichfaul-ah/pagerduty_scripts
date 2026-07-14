@@ -126,7 +126,7 @@ function requiredAction(status, issue) {
     return 'Resolve the listed migration prerequisite'
 }
 
-function writeOutputs(rows, priorSnapshot) {
+function writeOutputs(rows, priorSnapshot, excludedCount) {
     const now = new Date()
     const today = dateStamp(now)
     const dailyDir = path.join(__dirname, 'reports', 'daily')
@@ -221,6 +221,7 @@ function writeOutputs(rows, priorSnapshot) {
         '- Suppression rules and pending invitations are reported by their dedicated audit scripts and are not readiness blockers in this version.',
         '- Ready requires both PagerDuty and Opsgenie migration notifications to be handled.',
         '- Team scope is defined in `config/migration-teams.json`.',
+        `- Manually excluded from this report: ${excludedCount} teams.`,
         '',
     ].filter((line, index, array) => line !== '' || index === 0 || array[index - 1] !== '')
 
@@ -288,10 +289,13 @@ async function main() {
             }
         }
 
+        const excludedNames = new Set(
+            (CONFIG.excludedTeams || []).map((name) => name.toLowerCase())
+        )
         const scopeNames = new Set([
             ...CONFIG.additionalTeams,
             ...pdTeams.filter((team) => tagsByTeamId.has(team.id)).map((team) => team.name),
-        ])
+        ].filter((name) => !excludedNames.has(name.toLowerCase())))
         const baseRows = [...scopeNames].map((name) => {
             const pdTeam = pdByName.get(name.toLowerCase())
             const teamCoverage = pdTeam ? coverage.get(pdTeam.id) : null
@@ -332,7 +336,8 @@ async function main() {
         const dailyDir = path.join(__dirname, 'reports', 'daily')
         const { reportPath, snapshotPath } = writeOutputs(
             rows,
-            findPreviousSnapshot(dailyDir, dateStamp(new Date()))
+            findPreviousSnapshot(dailyDir, dateStamp(new Date())),
+            excludedNames.size
         )
         console.log(`Report written to ${reportPath}`)
         console.log(`Snapshot written to ${snapshotPath}`)

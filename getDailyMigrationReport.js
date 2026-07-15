@@ -50,16 +50,19 @@ async function resolveViaMessageSearch(teamName) {
 
 function buildAlertResult(pdResponse, ogAlert) {
     const pdStatus = pdResponse.incident.status
+    const pdHandled = ['acknowledged', 'resolved'].includes(pdStatus)
     const ogStatus = ogAlert.status === 'closed'
         ? 'Closed'
         : ogAlert.acknowledged
           ? 'Acknowledged'
           : 'Open'
+    const ogHandled = ogAlert.acknowledged || ogAlert.status === 'closed'
     return {
         pd: pdStatus.charAt(0).toUpperCase() + pdStatus.slice(1),
         og: ogStatus,
-        handled: ogAlert.acknowledged || ogAlert.status === 'closed',
-        pdHandled: ['acknowledged', 'resolved'].includes(pdStatus),
+        handled: pdHandled || ogHandled,
+        pdHandled,
+        ogHandled,
         unknown: false,
     }
 }
@@ -175,6 +178,7 @@ function writeOutputs(rows, priorSnapshot, excludedCount, invites) {
     const level1 = rows.filter((row) => row.hasLevel1).length
     const bothSent = rows.filter((row) => row.hasPDNotification && row.hasOpsgenieNotification).length
     const bothHandled = rows.filter((row) => row.alerts.handled).length
+    const ogHandledCount = rows.filter((row) => row.alerts.ogHandled).length
     const pdHandled = rows.filter((row) => row.alerts.pdHandled).length
     const readyPercentage = ((counts.Ready / rows.length) * 100).toFixed(1)
     const overall = counts.Ready / rows.length >= 0.95
@@ -223,8 +227,9 @@ function writeOutputs(rows, priorSnapshot, excludedCount, invites) {
         `| Service configured | ${service}/${rows.length} |`,
         `| Level 1 on-call active | ${level1}/${rows.length} |`,
         `| Both notifications sent | ${bothSent}/${rows.length} |`,
-        `| Opsgenie notification acknowledged or closed | ${bothHandled}/${bothSent} |`,
+        `| Opsgenie acknowledged or closed | ${ogHandledCount}/${bothSent} |`,
         `| PagerDuty notification acknowledged or resolved | ${pdHandled}/${bothSent} |`,
+        `| Either channel handled (Ready gate) | ${bothHandled}/${bothSent} |`,
         '',
         '## Pending Invitations',
         '',
@@ -254,7 +259,7 @@ function writeOutputs(rows, priorSnapshot, excludedCount, invites) {
         '## Notes',
         '',
         '- Suppression rules are reported by the dedicated audit script and are not readiness blockers in this version.',
-        '- Ready requires the Opsgenie migration notification to be acknowledged or closed by the team.',
+        '- Ready requires either the PagerDuty incident to be acknowledged/resolved, or the Opsgenie alert to be acknowledged or closed (including via ServiceNow). The team is considered to have taken ownership through whichever workflow they use.',
         '- Team scope is defined in `config/migration-teams.json`.',
         `- Manually excluded from this report: ${excludedCount} teams.`,
         '',

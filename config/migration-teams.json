@@ -61,5 +61,6 @@
     "NL-EEP-storex_platform-engineering",
     "NL-GALL-Flusso",
     "NL-GALL-Supply_Chain"
-  ]
+  ],
+  "alertmanagerConfigPath": "~/Projects/tech-nl-cerebro/plans/prd/technl/cerebro/terragrunt.hcl"
 }

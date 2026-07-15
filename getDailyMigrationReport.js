@@ -3,6 +3,7 @@
 require('dotenv').config()
 
 const fs = require('fs')
+const os = require('os')
 const path = require('path')
 
 const { connect, disconnect, getCoverageStatus } = require('./lib/db')
@@ -20,6 +21,29 @@ function escapeMarkdown(value) {
     return String(value ?? '')
         .replace(/\|/g, '\\|')
         .replace(/\r?\n/g, ' ')
+}
+
+function parseAlertmanagerTeams(configPath) {
+    if (!configPath) return { teams: new Set(), lastUpdated: null }
+
+    const resolved = configPath.startsWith('~')
+        ? path.join(os.homedir(), configPath.slice(1))
+        : configPath
+
+    try {
+        const content = fs.readFileSync(resolved, 'utf8')
+        const lastUpdated = fs.statSync(resolved).mtime
+        const match = content.match(/pagerduty_event_orchestrations\s*=\s*\[([\s\S]*?)\]/)
+        if (!match) {
+            console.warn('  [WARN] pagerduty_event_orchestrations block not found in alertmanager config')
+            return { teams: new Set(), lastUpdated }
+        }
+        const names = [...match[1].matchAll(/"([^"]+)"/g)].map((m) => m[1].toLowerCase())
+        return { teams: new Set(names), lastUpdated }
+    } catch (err) {
+        console.warn(`  [WARN] Could not read alertmanager config: ${err.message}`)
+        return { teams: new Set(), lastUpdated: null }
+    }
 }
 
 function dateStamp(date) {
@@ -149,7 +173,7 @@ function classifyTeam(team) {
     return { status: 'Ready', issue: '' }
 }
 
-function writeOutputs(rows, priorSnapshot, excludedCount, invites) {
+function writeOutputs(rows, priorSnapshot, excludedCount, invites, alertmanagerTeams, alertmanagerLastUpdated) {
     const now = new Date()
     const today = dateStamp(now)
     const dailyDir = path.join(__dirname, 'reports', 'daily')
@@ -180,6 +204,7 @@ function writeOutputs(rows, priorSnapshot, excludedCount, invites) {
     const bothHandled = rows.filter((row) => row.alerts.handled).length
     const ogHandledCount = rows.filter((row) => row.alerts.ogHandled).length
     const pdHandled = rows.filter((row) => row.alerts.pdHandled).length
+    const alertmanagerCount = rows.filter((row) => alertmanagerTeams.has(row.name.toLowerCase())).length
     const readyPercentage = ((counts.Ready / rows.length) * 100).toFixed(1)
     const overall = counts.Ready / rows.length >= 0.95
         ? 'Green'
@@ -196,6 +221,11 @@ function writeOutputs(rows, priorSnapshot, excludedCount, invites) {
     const issueSummary = [...byIssue.entries()]
         .map(([issue, teams]) => ({ issue, teams: teams.sort() }))
         .sort((a, b) => b.teams.length - a.teams.length)
+
+    const readyMissingAlertmanager = rows
+        .filter((row) => row.status === 'Ready' && !alertmanagerTeams.has(row.name.toLowerCase()))
+        .map((row) => row.name)
+        .sort()
 
     const generatedAt = now.toLocaleString('en-CA', {
         timeZone: 'Europe/Amsterdam',
@@ -230,6 +260,7 @@ function writeOutputs(rows, priorSnapshot, excludedCount, invites) {
         `| Opsgenie acknowledged or closed | ${ogHandledCount}/${bothSent} |`,
         `| PagerDuty notification acknowledged or resolved | ${pdHandled}/${bothSent} |`,
         `| Either channel handled (Ready gate) | ${bothHandled}/${bothSent} |`,
+        `| Alertmanager enabled (config updated: ${alertmanagerLastUpdated ? alertmanagerLastUpdated.toLocaleString('en-CA', { timeZone: 'Europe/Amsterdam', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).replace(',', '') + ' AMS' : 'unknown'}) | ${alertmanagerCount}/${rows.length} |`,
         '',
         '## Pending Invitations',
         '',
@@ -254,14 +285,13 @@ function writeOutputs(rows, priorSnapshot, excludedCount, invites) {
         ...issueSummary.map(({ issue, teams }) => `| ${escapeMarkdown(issue)} | ${teams.length} |`),
         `| **Total** | **${actionableRows.length}** |`,
         '',
+        '_Post-readiness:_',
+        '',
+        '| Issue | Teams |',
+        '|---|---:|',
+        `| Alertmanager not yet enabled (Ready teams) | ${readyMissingAlertmanager.length} |`,
+        '',
         `_Full team breakdown: [${today}-migration-actions.md](./actions/${today}-migration-actions.md)_`,
-        '',
-        '## Notes',
-        '',
-        '- Suppression rules are reported by the dedicated audit script and are not readiness blockers in this version.',
-        '- Ready requires either the PagerDuty incident to be acknowledged/resolved, or the Opsgenie alert to be acknowledged or closed (including via ServiceNow). The team is considered to have taken ownership through whichever workflow they use.',
-        '- Team scope is defined in `config/migration-teams.json`.',
-        `- Manually excluded from this report: ${excludedCount} teams.`,
         '',
     ].filter((line, index, array) => line !== '' || index === 0 || array[index - 1] !== '')
 
@@ -276,6 +306,12 @@ function writeOutputs(rows, priorSnapshot, excludedCount, invites) {
             ...teams.map((name) => `- ${name}`),
             '',
         ]),
+        `## Alertmanager not yet enabled — Ready teams (${readyMissingAlertmanager.length})`,
+        '',
+        '_These teams have completed the migration but still need to be added to `pagerduty_event_orchestrations` in terragrunt.hcl._',
+        '',
+        ...readyMissingAlertmanager.map((name) => `- ${name}`),
+        '',
     ]
 
     const snapshot = {
@@ -303,6 +339,8 @@ function writeOutputs(rows, priorSnapshot, excludedCount, invites) {
 
 async function main() {
     console.log('Collecting migration readiness data...')
+    const { teams: alertmanagerTeams, lastUpdated: alertmanagerLastUpdated } = parseAlertmanagerTeams(CONFIG.alertmanagerConfigPath)
+    console.log(`  Alertmanager teams loaded: ${alertmanagerTeams.size}`)
     await connect()
 
     try {
@@ -391,7 +429,9 @@ async function main() {
             rows,
             findPreviousSnapshot(dailyDir, dateStamp(new Date())),
             excludedNames.size,
-            invites
+            invites,
+            alertmanagerTeams,
+            alertmanagerLastUpdated
         )
         console.log(`Report written to ${reportPath}`)
         console.log(`Actions written to ${actionsPath}`)

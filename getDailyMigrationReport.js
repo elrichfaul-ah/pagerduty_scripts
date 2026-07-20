@@ -166,7 +166,7 @@ function classifyTeam(team) {
     }
     if (!team.hasPolicy) return { status: 'Attention', issue: 'Escalation policy needs to be configured' }
     if (!team.hasLevel1) return { status: 'Attention', issue: 'Level 1 on-call needs to be configured' }
-    if (team.hasService && !team.hasPDNotification) return { status: 'In Progress', issue: 'PagerDuty notification has not been triggered' }
+    if (!team.hasPDNotification) return { status: 'In Progress', issue: 'PagerDuty notification has not been triggered' }
     if (!team.hasOpsgenieNotification) return { status: 'In Progress', issue: 'Opsgenie notification has not been triggered' }
     if (team.alerts.unknown) return { status: 'Unknown', issue: 'Alert status lookup failed' }
     if (!team.alerts.handled) return { status: 'Attention', issue: 'Opsgenie notification requires acknowledgement' }
@@ -190,10 +190,10 @@ function writeOutputs(rows, priorSnapshot, excludedCount, invites, alertmanagerT
 
     const priorByTeam = new Map((priorSnapshot?.teams || []).map((team) => [team.name, team]))
     const newlyReady = rows.filter((row) => row.status === 'Ready' && priorByTeam.get(row.name)?.status !== 'Ready')
-    const newBlockers = rows.filter((row) => row.status === 'Blocked' && !['Blocked', 'Not Started'].includes(priorByTeam.get(row.name)?.status))
+    const newBlockers = rows.filter((row) => ['Attention', 'Unknown'].includes(row.status) && !['Attention', 'Unknown', 'Not Started'].includes(priorByTeam.get(row.name)?.status))
     const resolvedBlockers = rows.filter((row) => {
         const prior = priorByTeam.get(row.name)?.status
-        return ['Blocked', 'Not Started'].includes(prior) && !['Blocked', 'Not Started'].includes(row.status)
+        return ['Attention', 'Unknown', 'Not Started'].includes(prior) && !['Attention', 'Unknown', 'Not Started'].includes(row.status)
     })
 
     const complete = rows.filter((row) => row.tags.includes('Complete')).length
@@ -238,13 +238,13 @@ function writeOutputs(rows, priorSnapshot, excludedCount, invites, alertmanagerT
         '',
         `**Daily Summary - ${today}**`,
         '',
-        `**Approved scope:** ${rows.length} teams — union of PagerDuty teams tagged Complete or WIP and the curated additional team list in \`config/migration-teams.json\`, minus manually excluded teams.  `,
+        `**Approved scope:** ${rows.length} teams — union of PagerDuty teams tagged Complete or WIP and the curated additional team list in \`config/migration-teams.json\`, minus ${excludedCount} manually excluded teams.  `,
         `**Fully ready:** ${counts.Ready} teams (${readyPercentage}%) — teams that have passed every check in the readiness funnel and have either their PagerDuty incident or Opsgenie alert handled.  `,
         `**Data timestamp:** ${generatedAt}`,
         '',
         '## Status',
         '',
-        '_Current migration status for all approved teams. A team is **Ready** when it has a PagerDuty team, escalation policy, Level 1 on-call, both notifications sent, and either the PagerDuty incident or the Opsgenie alert has been handled. **Attention** means configuration is complete but handling is still required. **In Progress** means the team is tagged WIP or notifications have not yet been triggered. **Not Started** means no PagerDuty team has been found for this approved team._',
+        '_Current migration status for all approved teams. A team is **Ready** when it has a PagerDuty team, escalation policy, Level 1 on-call, both notifications sent, and either the PagerDuty incident or the Opsgenie alert has been handled. **Attention** means either configuration is incomplete (missing escalation policy or Level 1 on-call) or notifications have been sent but neither channel has been handled yet. **In Progress** means the team is tagged WIP or notifications have not yet been triggered. **Not Started** means no PagerDuty team has been found for this approved team._',
         '',
         '| Status | Teams |',
         '|---|---:|',

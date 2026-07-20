@@ -164,12 +164,16 @@ function classifyTeam(team) {
     if (team.tags.includes('WIP') && !team.tags.includes('Complete')) {
         return { status: 'In Progress', issue: 'Migration is tagged WIP' }
     }
+    if (!team.tags.includes('Complete')) {
+        return { status: 'In Progress', issue: 'Complete tag has not been applied' }
+    }
+    if (!team.hasService) return { status: 'Attention', issue: 'No service is assigned to this team' }
     if (!team.hasPolicy) return { status: 'Attention', issue: 'Escalation policy needs to be configured' }
     if (!team.hasLevel1) return { status: 'Attention', issue: 'Level 1 on-call needs to be configured' }
     if (!team.hasPDNotification) return { status: 'In Progress', issue: 'PagerDuty notification has not been triggered' }
     if (!team.hasOpsgenieNotification) return { status: 'In Progress', issue: 'Opsgenie notification has not been triggered' }
     if (team.alerts.unknown) return { status: 'Unknown', issue: 'Alert status lookup failed' }
-    if (!team.alerts.handled) return { status: 'Attention', issue: 'Opsgenie notification requires acknowledgement' }
+    if (!team.alerts.handled) return { status: 'Attention', issue: 'Neither PagerDuty nor Opsgenie alert has been handled' }
     return { status: 'Ready', issue: '' }
 }
 
@@ -244,7 +248,7 @@ function writeOutputs(rows, priorSnapshot, excludedCount, invites, alertmanagerT
         '',
         '## Status',
         '',
-        '_Current migration status for all approved teams. A team is **Ready** when it has a PagerDuty team, escalation policy, Level 1 on-call, both notifications sent, and either the PagerDuty incident or the Opsgenie alert has been handled. **Attention** means either configuration is incomplete (missing escalation policy or Level 1 on-call) or notifications have been sent but neither channel has been handled yet. **In Progress** means the team is tagged WIP or notifications have not yet been triggered. **Not Started** means no PagerDuty team has been found for this approved team._',
+        '_Current migration status for all approved teams. A team is **Ready** when it has a PagerDuty team, escalation policy, Level 1 on-call, both notifications sent, and either the PagerDuty incident or the Opsgenie alert has been handled. **Attention** means either configuration is incomplete (missing service, escalation policy, or Level 1 on-call) or both notifications have been sent but neither the PagerDuty incident nor the Opsgenie alert has been handled yet. **In Progress** means the team is tagged WIP or notifications have not yet been triggered. **Not Started** means no PagerDuty team has been found for this approved team._',
         '',
         '| Status | Teams |',
         '|---|---:|',

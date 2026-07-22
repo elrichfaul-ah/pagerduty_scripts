@@ -209,6 +209,8 @@ function writeOutputs(rows, priorSnapshot, excludedCount, invites, alertmanagerT
     const ogHandledCount = rows.filter((row) => row.alerts.ogHandled).length
     const pdHandled = rows.filter((row) => row.alerts.pdHandled).length
     const alertmanagerCount = rows.filter((row) => alertmanagerTeams.has(row.name.toLowerCase())).length
+    const snowCount = rows.filter((row) => row.tags.includes('SNOW_Enabled')).length
+    const snowTeams = rows.filter((row) => row.tags.includes('SNOW_Enabled')).map((row) => row.name).sort()
     const readyPercentage = ((counts.Ready / rows.length) * 100).toFixed(1)
     const overall = counts.Ready / rows.length >= 0.95
         ? 'Green'
@@ -269,6 +271,7 @@ function writeOutputs(rows, priorSnapshot, excludedCount, invites, alertmanagerT
         `| PagerDuty notification acknowledged or resolved | ${pdHandled}/${bothSent} |`,
         `| Either channel handled (Ready gate) | ${bothHandled}/${bothSent} |`,
         `| Alertmanager enabled (config updated: ${alertmanagerLastUpdated ? alertmanagerLastUpdated.toLocaleString('en-CA', { timeZone: 'Europe/Amsterdam', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).replace(',', '') + ' AMS' : 'unknown'}) | ${alertmanagerCount}/${rows.length} |`,
+        `| SNOW Enabled | ${snowCount}/${rows.length} |`,
         '',
         '## Pending Invitations',
         '',
@@ -320,6 +323,12 @@ function writeOutputs(rows, priorSnapshot, excludedCount, invites, alertmanagerT
             ...teams.map((name) => `- ${name}`),
             '',
         ]),
+        `## SNOW Enabled (${snowTeams.length})`,
+        '',
+        '_Teams that currently have the SNOW_Enabled tag applied in PagerDuty._',
+        '',
+        ...snowTeams.map((name) => `- ${name}`),
+        '',
         `## Alertmanager not yet enabled — Ready teams (${readyMissingAlertmanager.length})`,
         '',
         '_These teams have completed the migration but still need to be added to `pagerduty_event_orchestrations` in terragrunt.hcl._',

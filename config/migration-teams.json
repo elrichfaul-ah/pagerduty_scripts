@@ -1,5 +1,5 @@
 {
-  "includePagerDutyTags": ["Complete", "WIP"],
+  "includePagerDutyTags": ["Complete", "WIP", "SNOW_Enabled"],
   "additionalTeams": [
     "AMS_TCS_L3_DBManagement",
     "NL-CTP-content_hub-and-automation",
@@ -31,8 +31,6 @@
     "NL-SNA-logistics_dc-algos",
     "NL-SNA-macro_space-optimization",
     "NL-STP-enablement_iot",
-    "NL-STP-store_instore-production",
-    "NL-STP-store_supernova",
     "NL-TECH-Integration_EDI-L2",
     "Tech NL Incident Commander - Gall"
   ],
@@ -60,7 +58,9 @@
     "NL-SNA-genai_agentic-shopping",
     "NL-SNA-packaging",
     "NL-STP-enablement_ncr-service-desk",
-    "NL-STP-store_dataservices"
+    "NL-STP-store_dataservices",
+    "NL-STP-store_instore-production",
+    "NL-STP-store_supernova"
   ],
   "alertmanagerConfigPath": "~/Projects/tech-nl-cerebro/plans/prd/technl/cerebro/terragrunt.hcl"
 }

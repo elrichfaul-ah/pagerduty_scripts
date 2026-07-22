@@ -31,6 +31,7 @@
     "NL-SNA-logistics_dc-algos",
     "NL-SNA-macro_space-optimization",
     "NL-STP-enablement_iot",
+    "NL-EEP-cloud_resources",
     "NL-TECH-Integration_EDI-L2",
     "Tech NL Incident Commander - Gall"
   ],
@@ -44,7 +45,7 @@
     "NL-EEP-mynt",
     "NL-EEP-nexa",
     "NL-EEP-beast_tooling",
-    "NL-EEP-cloud_resources",
+
     "NL-EEP-developer_platform",
     "NL-EEP-storex_platform-engineering",
     "NL-GALL-Flusso",

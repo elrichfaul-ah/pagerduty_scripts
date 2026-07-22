@@ -18,12 +18,20 @@ function dateStamp(date) {
 }
 
 function generatedAtStamp(date) {
-    return date.toLocaleString('en-CA', {
-        timeZone: 'Europe/Amsterdam',
-        year: 'numeric', month: '2-digit', day: '2-digit',
-        hour: '2-digit', minute: '2-digit', second: '2-digit',
-        hour12: false,
-    }).replace(',', '') + ' AMS'
+    return (
+        date
+            .toLocaleString('en-CA', {
+                timeZone: 'Europe/Amsterdam',
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: false,
+            })
+            .replace(',', '') + ' AMS'
+    )
 }
 
 /**
@@ -39,13 +47,23 @@ function parseSuppressions(configPath) {
 
     try {
         const content = fs.readFileSync(resolved, 'utf8')
-        const match = content.match(/opsgenie_paging_suppressions\s*=\s*\{([\s\S]*?)\n  \}/)
+        const match = content.match(
+            /opsgenie_paging_suppressions\s*=\s*\{([\s\S]*?)\n  \}/
+        )
         if (!match) {
-            console.warn('  [WARN] opsgenie_paging_suppressions block not found in terragrunt.hcl')
+            console.warn(
+                '  [WARN] opsgenie_paging_suppressions block not found in terragrunt.hcl'
+            )
             return new Map()
         }
-        const entries = [...match[1].matchAll(/\"([^\"]+)\"\s*=\s*\{\s*enabled\s*=\s*(true|false)\s*\}/g)]
-        return new Map(entries.map(e => [e[1].toLowerCase(), e[2] === 'true']))
+        const entries = [
+            ...match[1].matchAll(
+                /\"([^\"]+)\"\s*=\s*\{\s*enabled\s*=\s*(true|false)\s*\}/g
+            ),
+        ]
+        return new Map(
+            entries.map((e) => [e[1].toLowerCase(), e[2] === 'true'])
+        )
     } catch (err) {
         console.warn(`  [WARN] Could not read terragrunt.hcl: ${err.message}`)
         return new Map()
@@ -57,20 +75,24 @@ function parseSuppressions(configPath) {
  * that have one scoped to one of their services.
  */
 async function getWebhookTeamNames() {
-    const webhooks = await fetchAllPages('/webhook_subscriptions', 'webhook_subscriptions')
-    const activeSnow = webhooks.filter(w =>
-        w.active &&
-        !w.delivery_method?.temporarily_disabled &&
-        w.delivery_method?.url?.includes('aholddelhaize.service-now.com') &&
-        w.filter?.type === 'service_reference'
+    const webhooks = await fetchAllPages(
+        '/webhook_subscriptions',
+        'webhook_subscriptions'
+    )
+    const activeSnow = webhooks.filter(
+        (w) =>
+            w.active &&
+            !w.delivery_method?.temporarily_disabled &&
+            w.delivery_method?.url?.includes('aholddelhaize.service-now.com') &&
+            w.filter?.type === 'service_reference'
     )
 
     console.log(`  Active prod SNOW webhooks found: ${activeSnow.length}`)
 
     const teamNameSets = await Promise.all(
-        activeSnow.map(w =>
-            pdGet(`/services/${w.filter.id}?include[]=teams`).then(r =>
-                (r.service.teams || []).map(t => t.summary.toLowerCase())
+        activeSnow.map((w) =>
+            pdGet(`/services/${w.filter.id}?include[]=teams`).then((r) =>
+                (r.service.teams || []).map((t) => t.summary.toLowerCase())
             )
         )
     )
@@ -87,11 +109,11 @@ function writeReport(teams, suppressions, webhookTeams) {
     const generatedAt = generatedAtStamp(now)
 
     // Classify every PD team
-    const fullyEnabled    = []
-    const webhookMissing  = []   // suppression true, no webhook
+    const fullyEnabled = []
+    const webhookMissing = [] // suppression true, no webhook
     const suppressionMissing = [] // webhook exists, suppression false/missing
-    const notStarted      = []   // in terraform, neither enabled
-    const notInTerraform  = []   // no entry in suppression block at all
+    const notStarted = [] // in terraform, neither enabled
+    const notInTerraform = [] // no entry in suppression block at all
 
     for (const team of teams) {
         const lower = team.name.toLowerCase()
@@ -113,8 +135,13 @@ function writeReport(teams, suppressions, webhookTeams) {
     }
 
     // Sort all lists alphabetically
-    ;[fullyEnabled, webhookMissing, suppressionMissing, notStarted, notInTerraform]
-        .forEach(list => list.sort())
+    ;[
+        fullyEnabled,
+        webhookMissing,
+        suppressionMissing,
+        notStarted,
+        notInTerraform,
+    ].forEach((list) => list.sort())
 
     const total = teams.length
 
@@ -137,9 +164,9 @@ function writeReport(teams, suppressions, webhookTeams) {
         '',
         '| Status | Teams |',
         '|---|---:|',
-        `| Fully enabled (webhook + suppression) | ${fullyEnabled.length} |`,
+        `| Fully enabled (webhook + OpsGenie disabled) | ${fullyEnabled.length} |`,
         `| Partial — webhook missing | ${webhookMissing.length} |`,
-        `| Partial — suppression missing | ${suppressionMissing.length} |`,
+        `| Partial — OpsGenie not yet disabled | ${suppressionMissing.length} |`,
         `| Not started | ${notStarted.length} |`,
         `| Not in Terraform | ${notInTerraform.length} |`,
         `| **Total PagerDuty teams** | **${total}** |`,
@@ -148,9 +175,9 @@ function writeReport(teams, suppressions, webhookTeams) {
         '',
         `## Fully Enabled (${fullyEnabled.length})`,
         '',
-        '_Both the SNOW webhook and OpsGenie suppression are active for these teams._',
+        '_Both the SNOW webhook is active and OpsGenie has been disabled for these teams._',
         '',
-        '| Team | Webhook | Suppression |',
+        '| Team | Webhook | OpsGenie Disabled |',
         '|---|:---:|:---:|',
         ...fullyEnabled.map(name => `| ${name} | ${tick} | ${tick} |`),
         '',
@@ -158,9 +185,9 @@ function writeReport(teams, suppressions, webhookTeams) {
         '',
         `## Partial — Webhook Missing (${webhookMissing.length})`,
         '',
-        '_Suppression is enabled in Terraform but no active SNOW webhook exists. A webhook needs to be created in PagerDuty._',
+        '_OpsGenie has been disabled in Terraform but no active SNOW webhook exists in PagerDuty. A webhook needs to be created._',
         '',
-        '| Team | Webhook | Suppression |',
+        '| Team | Webhook | OpsGenie Disabled |',
         '|---|:---:|:---:|',
         ...(webhookMissing.length > 0
             ? webhookMissing.map(name => `| ${name} | ${cross} | ${tick} |`)
@@ -168,11 +195,11 @@ function writeReport(teams, suppressions, webhookTeams) {
         '',
         '---',
         '',
-        `## Partial — Suppression Missing (${suppressionMissing.length})`,
+        `## Partial — OpsGenie Not Yet Disabled (${suppressionMissing.length})`,
         '',
-        '_An active SNOW webhook exists but suppression is not yet enabled in Terraform. Set `enabled = true` in `opsgenie_paging_suppressions`._',
+        '_An active SNOW webhook exists but OpsGenie has not yet been disabled in Terraform. Set `enabled = true` in `opsgenie_paging_suppressions`._',
         '',
-        '| Team | Webhook | Suppression |',
+        '| Team | Webhook | OpsGenie Disabled |',
         '|---|:---:|:---:|',
         ...(suppressionMissing.length > 0
             ? suppressionMissing.map(name => `| ${name} | ${tick} | ${cross} |`)
@@ -182,7 +209,7 @@ function writeReport(teams, suppressions, webhookTeams) {
         '',
         `## Not Started (${notStarted.length})`,
         '',
-        '_In the Terraform suppression block but neither the webhook nor the suppression has been enabled._',
+        '_In the Terraform block but neither the SNOW webhook has been created nor OpsGenie disabled._',
         '',
         '| Team |',
         '|---|',
@@ -192,7 +219,7 @@ function writeReport(teams, suppressions, webhookTeams) {
         '',
         `## Not in Terraform (${notInTerraform.length})`,
         '',
-        '_These PagerDuty teams have no entry in `opsgenie_paging_suppressions` in `terragrunt.hcl`. They cannot have suppression configured until an entry is added._',
+        '_These PagerDuty teams have no entry in `opsgenie_paging_suppressions` in `terragrunt.hcl`. OpsGenie cannot be disabled for them until an entry is added._',
         '',
         '| Team |',
         '|---|',
@@ -216,7 +243,9 @@ async function main() {
 
     const suppressions = parseSuppressions(CONFIG.alertmanagerConfigPath)
     console.log(`  Terraform suppression entries loaded: ${suppressions.size}`)
-    console.log(`  Entries with enabled=true: ${[...suppressions.values()].filter(Boolean).length}`)
+    console.log(
+        `  Entries with enabled=true: ${[...suppressions.values()].filter(Boolean).length}`
+    )
 
     const [pdTeams, webhookTeams] = await Promise.all([
         getAllTeams(),
@@ -230,7 +259,7 @@ async function main() {
     console.log(`\nReport written to ${outPath}`)
 }
 
-main().catch(err => {
+main().catch((err) => {
     console.error(`Fatal error: ${err.message}`)
     process.exit(1)
 })

@@ -1,5 +1,6 @@
 {
   "teams": [
+    ##"AD_GL_Cyberdefense_OnCall",
     "AH_IT_EEP_DevSecOps_Tooling",
     "AMS_TCS_L3_DBManagement",
     "AMS_TCS_L3_WorkforcePlanning",
@@ -12,6 +13,7 @@
     "NL-CTP-marketing_workflow-automation",
     "NL-Customer_Data_Critical_Feeds-L2",
     "NL-EEP-integration_platform",
+    "NL-EEP-qa",
     "NL-RBP-DataEngineering-L3",
     "NL-RBP-GenesysBusinessCenter-L3",
     "NL-RBP-product_data-portal",

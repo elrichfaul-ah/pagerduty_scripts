@@ -372,7 +372,7 @@ async function main() {
             const scope = teamName
                 ? teamName.replace(/[^a-zA-Z0-9_-]/g, '_')
                 : path.basename(filePath || DEFAULT_CONFIG_PATH, '.json')
-            const reportFile = path.join(reportsDir, `report-deprecation-${mode}-${scope}-${timestamp}.txt`)
+            const reportFile = path.join(reportsDir, `report-deprecation-${mode}-${scope}-${timestamp}.md`)
             fs.writeFileSync(reportFile, reportLines.join('\n') + '\n', 'utf8')
             _origLog(`\nReport saved to: ${reportFile}`)
         } catch (writeErr) {

@@ -721,7 +721,7 @@ async function main() {
                 : 'bulk'
             const reportFile = path.join(
                 reportsDir,
-                `report-${mode}-${scope}-${timestamp}.txt`
+                `report-${mode}-${scope}-${timestamp}.md`
             )
             fs.writeFileSync(reportFile, reportLines.join('\n') + '\n', 'utf8')
             _origLog(`\nReport saved to: ${reportFile}`)

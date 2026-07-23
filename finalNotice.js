@@ -6,13 +6,23 @@
 
 const dotenvResult = require('dotenv').config()
 if (dotenvResult.error && dotenvResult.error.code !== 'ENOENT') {
-    console.error(`Warning: could not load .env file: ${dotenvResult.error.message}`)
+    console.error(
+        `Warning: could not load .env file: ${dotenvResult.error.message}`
+    )
 }
 
-const REQUIRED_ENV = ['PAGERDUTY_API_KEY', 'PAGERDUTY_FROM_EMAIL', 'OPSGENIE_API_KEY']
-const missingEnv = REQUIRED_ENV.filter((k) => !process.env[k] || process.env[k].trim() === '')
+const REQUIRED_ENV = [
+    'PAGERDUTY_API_KEY',
+    'PAGERDUTY_FROM_EMAIL',
+    'OPSGENIE_API_KEY',
+]
+const missingEnv = REQUIRED_ENV.filter(
+    (k) => !process.env[k] || process.env[k].trim() === ''
+)
 if (missingEnv.length) {
-    console.error(`Error: Missing required environment variable(s): ${missingEnv.join(', ')}`)
+    console.error(
+        `Error: Missing required environment variable(s): ${missingEnv.join(', ')}`
+    )
     console.error('Set them in the .env file or export them before running.')
     process.exit(1)
 }
@@ -32,7 +42,10 @@ const {
     getTeamIdsByTagId,
 } = require('./lib/pagerduty')
 
-const { getTeamByName: getOpsgenieTeamByName, createAlert } = require('./lib/opsgenie')
+const {
+    getTeamByName: getOpsgenieTeamByName,
+    createAlert,
+} = require('./lib/opsgenie')
 
 const {
     connect,
@@ -46,15 +59,14 @@ const {
 // ---------------------------------------------------------------------------
 
 const COMPLETE_TAG = 'Complete'
-const CONFIG_PATH  = path.join(__dirname, 'config', 'finalNotice.json')
+const CONFIG_PATH = path.join(__dirname, 'config', 'finalNotice.json')
 
 const RUNBOOK_URL =
     'https://confluence-aholddelhaize.atlassian.net/wiki/spaces/EEP/pages/150787558943/Opsgenie+Pagerduty+Migration+Runbook'
 
 const ALERT_DESCRIPTION =
-    'On the 27th of July 2027, the ServiceNow integration will be enabled for PagerDuty for all teams. ' +
-    'OpsGenie will then officially be deprecated. ' +
-    'Make sure you are onboarded onto PagerDuty and all steps in the runbook have been followed. ' +
+    'On the 27th of July 2026, the ServiceNow integration will be enabled for PagerDuty for all teams. ' +
+    'Make sure you are onboarded onto PagerDuty and all steps in the runbook have been followed. The runbook can be found here: ' +
     RUNBOOK_URL
 
 // ---------------------------------------------------------------------------
@@ -72,7 +84,9 @@ function parseArgs() {
         const candidate = args[teamFlagIndex + 1]
         if (!candidate || candidate.startsWith('--')) {
             console.error('Error: --team requires a team name argument.')
-            console.error('  Example: node finalNotice.js --team NL-CTP-Fulfillment')
+            console.error(
+                '  Example: node finalNotice.js --team NL-CTP-Fulfillment'
+            )
             process.exit(1)
         }
         teamName = candidate
@@ -97,8 +111,14 @@ function loadExclusions() {
 
 function prompt(question) {
     return new Promise((resolve) => {
-        const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
-        rl.question(question, (answer) => { rl.close(); resolve(answer.trim()) })
+        const rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout,
+        })
+        rl.question(question, (answer) => {
+            rl.close()
+            resolve(answer.trim())
+        })
     })
 }
 
@@ -118,7 +138,9 @@ async function fetchCompleteTeams() {
         return []
     }
 
-    console.log(`Fetching full team details (${taggedTeamIds.length} tagged)...`)
+    console.log(
+        `Fetching full team details (${taggedTeamIds.length} tagged)...`
+    )
     const allTeams = await getAllTeams()
     const teamById = new Map(allTeams.map((t) => [t.id, t]))
 
@@ -141,7 +163,7 @@ async function runSingleTeam(teamName, dryRun) {
     if (!team) {
         throw new Error(
             `Team "${teamName}" not found in PagerDuty. ` +
-            'Check the name is exact (case-insensitive match is used).'
+                'Check the name is exact (case-insensitive match is used).'
         )
     }
     console.log(`  Found: ${team.name} (${team.id})\n`)
@@ -154,7 +176,7 @@ async function runSingleTeam(teamName, dryRun) {
     if (!taggedTeamIds.includes(team.id)) {
         throw new Error(
             `Team "${team.name}" does not have the "${COMPLETE_TAG}" tag. ` +
-            'The team must be marked Complete in Terraform before sending a final notice.'
+                'The team must be marked Complete in Terraform before sending a final notice.'
         )
     }
     console.log(`  Confirmed — team has the "${COMPLETE_TAG}" tag.\n`)
@@ -165,7 +187,7 @@ async function runSingleTeam(teamName, dryRun) {
     if (!opsgenieTeam) {
         throw new Error(
             `Team "${team.name}" not found in OpsGenie. ` +
-            'Ensure the OpsGenie team name matches the PagerDuty team name exactly.'
+                'Ensure the OpsGenie team name matches the PagerDuty team name exactly.'
         )
     }
     console.log(`  Confirmed — OpsGenie team "${opsgenieTeam.name}" exists.\n`)
@@ -176,13 +198,19 @@ async function runSingleTeam(teamName, dryRun) {
     const wasNotified = alreadyNotified.has(team.id)
 
     if (wasNotified) {
-        console.log(`  ⚠  WARNING: "${team.name}" has already been sent a final notice.`)
+        console.log(
+            `  ⚠  WARNING: "${team.name}" has already been sent a final notice.`
+        )
         if (dryRun) {
             console.log('     Dry-run mode — no action taken.')
-            console.log('     Run with --execute to send again despite previous notice.')
+            console.log(
+                '     Run with --execute to send again despite previous notice.'
+            )
             return
         }
-        const reAnswer = await prompt(`\n  Team has already been notified. Send again? [y/N]: `)
+        const reAnswer = await prompt(
+            `\n  Team has already been notified. Send again? [y/N]: `
+        )
         if (reAnswer.toLowerCase() !== 'y') {
             console.log('\nAborted. No notification sent.')
             return
@@ -199,17 +227,23 @@ async function runSingleTeam(teamName, dryRun) {
     console.log(`[${modeLabel}] ${verb}: ${team.name}`)
     console.log(`           Channel:  OpsGenie alert (P2)`)
     console.log(`           OpsGenie: ${opsgenieTeam.name}`)
-    console.log(`           Message:  ServiceNow Enablement Notice: ${team.name}`)
+    console.log(
+        `           Message:  ServiceNow Enablement Notice: ${team.name}`
+    )
     console.log('─'.repeat(64) + '\n')
 
     if (dryRun) {
-        console.log('[DRY-RUN] Would send final notice to OpsGenie.')
-        console.log('\nNo changes made. Run with --execute to send the real alert.')
+        console.log(`[DRY-RUN] Would alert OpsGenie team: ${opsgenieTeam.name}`)
+        console.log(
+            '\nNo changes made. Run with --execute to send the real alert.'
+        )
         return
     }
 
     // Execute: confirmation prompt
-    const answer = await prompt(`Send final notice to "${opsgenieTeam.name}" via OpsGenie? [y/N]: `)
+    const answer = await prompt(
+        `Send final notice to "${opsgenieTeam.name}" via OpsGenie? [y/N]: `
+    )
     if (answer.toLowerCase() !== 'y') {
         console.log('\nAborted. No notification sent.')
         return
@@ -226,11 +260,16 @@ async function runSingleTeam(teamName, dryRun) {
     await recordFinalNotice({
         teamId: team.id,
         teamName: team.name,
+        serviceId: null,
+        serviceName: null,
+        incidentId: null,
         opsgenieRequestId,
         dryRun: false,
     })
 
-    console.log(`[NOTIFIED] ${team.name} — OpsGenie request ${opsgenieRequestId}`)
+    console.log(
+        `[NOTIFIED] ${team.name} — OpsGenie request ${opsgenieRequestId}`
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -240,7 +279,9 @@ async function runSingleTeam(teamName, dryRun) {
 async function runBulk(dryRun) {
     const exclusions = loadExclusions()
     if (exclusions.size > 0) {
-        console.log(`Exclusions loaded: ${exclusions.size} team(s) from ${CONFIG_PATH}`)
+        console.log(
+            `Exclusions loaded: ${exclusions.size} team(s) from ${CONFIG_PATH}`
+        )
     }
 
     // Discover Complete-tagged teams from PagerDuty
@@ -248,9 +289,13 @@ async function runBulk(dryRun) {
     if (completeTeams.length === 0) return
 
     // Apply exclusions
-    const candidates = completeTeams.filter((t) => !exclusions.has(t.name.toLowerCase()))
+    const candidates = completeTeams.filter(
+        (t) => !exclusions.has(t.name.toLowerCase())
+    )
     if (exclusions.size > 0) {
-        console.log(`  ${completeTeams.length - candidates.length} team(s) excluded.\n`)
+        console.log(
+            `  ${completeTeams.length - candidates.length} team(s) excluded.\n`
+        )
     }
 
     // Check MongoDB for already-notified teams
@@ -259,11 +304,13 @@ async function runBulk(dryRun) {
     console.log(`  ${alreadyNotifiedIds.size} team(s) already notified.\n`)
 
     // Classify teams
-    const toNotify       = []
-    const alreadyDone    = []
+    const toNotify = []
+    const alreadyDone = []
     const noOpsgenieTeam = []
 
-    console.log(`Resolving OpsGenie teams for ${candidates.length} candidate(s)...`)
+    console.log(
+        `Resolving OpsGenie teams for ${candidates.length} candidate(s)...`
+    )
     for (const team of candidates) {
         if (alreadyNotifiedIds.has(team.id)) {
             alreadyDone.push(team)
@@ -296,15 +343,17 @@ async function runBulk(dryRun) {
     }
 
     if (noOpsgenieTeam.length > 0) {
-        console.log(`\nNo OpsGenie team found — will skip (${noOpsgenieTeam.length}):`)
+        console.log(
+            `\nNo OpsGenie team found — will skip (${noOpsgenieTeam.length}):`
+        )
         noOpsgenieTeam.forEach((team) => console.log(`  ! ${team.name}`))
     }
 
     console.log('\n' + '─'.repeat(64))
     console.log(
         `Summary: ${toNotify.length} to notify | ` +
-        `${alreadyDone.length} already done | ` +
-        `${noOpsgenieTeam.length} no OpsGenie team`
+            `${alreadyDone.length} already done | ` +
+            `${noOpsgenieTeam.length} no OpsGenie team`
     )
     console.log('─'.repeat(64) + '\n')
 
@@ -316,7 +365,9 @@ async function runBulk(dryRun) {
     // Dry-run: log intent only, no DB write, no alerts sent
     if (dryRun) {
         console.log('[DRY-RUN] Would send final notices to:\n')
-        toNotify.forEach(({ team }) => console.log(`  [DRY-RUN] Would alert: ${team.name}`))
+        toNotify.forEach(({ team }) =>
+            console.log(`  [DRY-RUN] Would alert: ${team.name}`)
+        )
         console.log(`\n[DRY-RUN] Complete. No alerts sent.`)
         console.log('Run with --execute to send real final notices.')
         return
@@ -347,11 +398,16 @@ async function runBulk(dryRun) {
             await recordFinalNotice({
                 teamId: team.id,
                 teamName: team.name,
+                serviceId: null,
+                serviceName: null,
+                incidentId: null,
                 opsgenieRequestId,
                 dryRun: false,
             })
 
-            console.log(`  [NOTIFIED]  ${team.name} — OpsGenie request ${opsgenieRequestId}`)
+            console.log(
+                `  [NOTIFIED]  ${team.name} — OpsGenie request ${opsgenieRequestId}`
+            )
             results.notified++
         } catch (err) {
             console.error(`  [ERROR]     ${team.name} — ${err.message}`)
@@ -428,11 +484,16 @@ async function main() {
             const scope = teamName
                 ? teamName.replace(/[^a-zA-Z0-9_-]/g, '_')
                 : 'bulk'
-            const reportFile = path.join(reportsDir, `report-final-notice-${mode}-${scope}-${timestamp}.md`)
+            const reportFile = path.join(
+                reportsDir,
+                `report-final-notice-${mode}-${scope}-${timestamp}.md`
+            )
             fs.writeFileSync(reportFile, reportLines.join('\n') + '\n', 'utf8')
             _origLog(`\nReport saved to: ${reportFile}`)
         } catch (writeErr) {
-            _origLog(`\nWarning: could not write report file — ${writeErr.message}`)
+            _origLog(
+                `\nWarning: could not write report file — ${writeErr.message}`
+            )
         } finally {
             console.log = _origLog
         }

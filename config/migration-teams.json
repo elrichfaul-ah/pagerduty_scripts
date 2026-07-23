@@ -62,7 +62,8 @@
     "NL-STP-store_dataservices",
     "NL-STP-store_instore-production",
     "NL-STP-store_supernova",
-    "NL-RBP-product_data-portal"
+    "NL-RBP-product_data-portal",
+    "AH_IT_EEP_DevSecOps_Tooling"
   ],
   "alertmanagerConfigPath": "~/Projects/tech-nl-cerebro/plans/prd/technl/cerebro/terragrunt.hcl"
 }

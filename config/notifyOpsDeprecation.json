@@ -1,0 +1,25 @@
+{
+  "teams": [
+    "AD_GL_Cyberdefense_OnCall",
+    "AH_IT_EEP_DevSecOps_Tooling",
+    "AMS_TCS_L3_DBManagement",
+    "AMS_TCS_L3_WorkforcePlanning",
+    "DO_AH-Technology_RTP_L3_ADF",
+    "DO_AH_COMMERCE_L3_PRODUCT",
+    "DO_AH_DDP_L3_Fundament",
+    "GL-ENA-Cloud_CFI-L3",
+    "Infra_TCS_Lx_DBA",
+    "NL-CTP-labs",
+    "NL-CTP-marketing_workflow-automation",
+    "NL-Customer_Data_Critical_Feeds-L2",
+    "NL-EEP-integration_platform",
+    "NL-EEP-qa",
+    "NL-RBP-DataEngineering-L3",
+    "NL-RBP-GenesysBusinessCenter-L3",
+    "NL-RBP-product_data-portal",
+    "NL-RBP_SAS_L3",
+    "NL-SNA-recommendations",
+    "NL-TECH-RBP-Titans",
+    "NL-RTP-SC_LogisticsOps"
+  ]
+}

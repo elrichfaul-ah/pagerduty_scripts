@@ -33,7 +33,8 @@
     "NL-STP-enablement_iot",
     "NL-EEP-cloud_resources",
     "NL-TECH-Integration_EDI-L2",
-    "Tech NL Incident Commander - Gall"
+    "Tech NL Incident Commander - Gall",
+    "AH_IT_EEP_DevSecOps_Tooling"
   ],
   "excludedTeams": [
     "DO_AH_FINANCE_L3_KAFKA",
@@ -60,7 +61,8 @@
     "NL-STP-enablement_ncr-service-desk",
     "NL-STP-store_dataservices",
     "NL-STP-store_instore-production",
-    "NL-STP-store_supernova"
+    "NL-STP-store_supernova",
+    "NL-RBP-product_data-portal"
   ],
   "alertmanagerConfigPath": "~/Projects/tech-nl-cerebro/plans/prd/technl/cerebro/terragrunt.hcl"
 }
